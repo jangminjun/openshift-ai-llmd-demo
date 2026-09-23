@@ -7,7 +7,10 @@
 # 1-replica run and an N-replica run can be compared directly. Runs ON the
 # bastion. Idempotent (deletes/recreates its own load-generator pod).
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
+# python3 may be a non-functional Store alias on Windows (local mode) -> fall back to python.
+PY=python3; python3 -c 'pass' 2>/dev/null || PY=python
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario11}"
 LLMD_NAME="${LLMD_NAME:-llmd-dp-demo}"
@@ -60,7 +63,7 @@ TOKEN=$(oc create token thanos-reader -n openshift-monitoring --duration=15m)
 #   client cert (system:admin), which has no bearer token to print -- hit this live 2026-09-08.
 THROUGHPUT=$(curl -sk -H "Authorization: Bearer $TOKEN" \
   --data-urlencode "query=sum(rate(kserve_http_requests_total{namespace=\"$LLMD_NAMESPACE\"}[2m]))" \
-  "https://$ROUTE/api/v1/query" | python3 -c "import json,sys; d=json.load(sys.stdin)['data']['result']; print(d[0]['value'][1] if d else '0')")
+  "https://$ROUTE/api/v1/query" | "$PY" -c "import json,sys; d=json.load(sys.stdin)['data']['result']; print(d[0]['value'][1] if d else '0')")
 
 oc delete pod llmd-load-generator -n "$LLMD_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
 

@@ -25,11 +25,10 @@ RHOAI 3.4.4 기준으로, llm-d는 **별도의 Helm/Operator 설치가 필요 �
   엔진에 들어간 뒤 생성 중 실패한 경우만 잡고, 컨텍스트 초과·잘못된 파라미터 같은 요청 검증 단계 거부
   (HTTP 4xx)는 잡지 못함 (실측 확인, [test-results-2026-09-07.md](docs/test-results-2026-09-07.md)). 그래서
   에러율은 **`kserve_http_requests_total`의 `status` 라벨**(`4xx`/`5xx`) 기준으로 계산한다.
-- MaaS(Models-as-a-Service)를 쓰려면 RHCL(Kuadrant: Authorino+Limitador)이 별도로 필요하고, DSC의
-  `spec.components.kserve.modelsAsService.managementState: Managed`로 활성화한다 — RHOAI **3.3+**부터만
-  지원 (2.x 계열에는 이 필드 자체가 없음, `openshift-aws-harness`의 `stable` OLM 채널이 2.x를 가리킬 수
-  있으니 `stable-3.4` 등으로 명시 필요 — 실제로 이 문제에 걸렸던 기록은 harness 쪽
-  `lessonlearn.md`/커밋 참고).
+- MaaS(Models-as-a-Service)는 RHCL(Kuadrant: Authorino+Limitador)이 필요하며, 활성화 필드가 버전별로 다르다.
+  RHOAI 3.5+는 DSC `spec.components.aigateway.modelsAsAService`(AITenant, `maas-default-gateway`, maas-api DB),
+  3.3/3.4는 `spec.components.kserve.modelsAsService`이다. `./harness.sh maas`가 DSC 스키마로 판별해
+  `remote/maas.sh`(3.5+) 또는 `remote/maas-rhoai34.sh`(3.3/3.4)를 실행한다.
 
 ```mermaid
 flowchart LR
@@ -78,6 +77,15 @@ flowchart LR
 | 14 | [지연(delay) 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 중 어디가 병목인지 메트릭으로 구분 | **실측 완료 + 재검증** — decode가 두 번 다 단독 병목(9.6s/4.9s), 하네스 이전 후에도 재현됨 | `scenario14-llmd-latency-*` |
 | 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티GPU 텐서 분할 서빙 | **계획만** (멀티GPU 노드 필요) | 미구현 |
 | 16 | [Expert 병렬화(EP, MoE)](docs/scenarios/16-expert-parallelism.md) | MoE 모델의 expert 분산 | **계획만** (MoE 모델+멀티GPU 필요) | 미구현 |
+| 21 | [우선순위 Flow Control](docs/scenarios/21-flow-control-priority.md) | 포화 시 대화형 요청이 배치보다 우선 처리되는지 (`InferenceObjective`) | **실측 완료** — 대화형 TTFT 1.7 s vs 24.3 s(`concurrency-detector` 필요) | `llmd-loadgen`, `llmd-promql` |
+| 22 | [EPP Scorer 4종](docs/scenarios/22-epp-scorers.md) | KV 캐시 적재 pod로 라우팅되어 TTFT가 단축되는지 | **실측 완료** — 캐시 적중률 83% vs 58%, TTFT p50 10배 | `llmd-loadgen`, `llmd-promql` |
+| 23 | [추론 인지 Pod 라이프사이클](docs/scenarios/23-inference-aware-lifecycle.md) | 롤링 업데이트 중 로딩 중인 pod로 라우팅되지 않는지 | **실측 완료** — 롤링 업데이트 중 유실 0건 | `llmd-loadgen`, `llmd-promql` |
+| 24 | [멀티모달 라우팅](docs/scenarios/24-multimodal-routing.md) | 동일 이미지 재요청이 캐시 pod로 가는지 | **실측 완료** — 멀티모달 캐시 적중률 76% vs 61%, TTFT 3.8배 | `llmd-loadgen`, `llmd-promql` |
+| 25 | [E2E 분산 트레이싱](docs/scenarios/25-e2e-tracing.md) | `spec.tracing`으로 Gateway→EPP→vLLM trace가 연결되는지 | **실측 완료** — EPP→vLLM 단일 trace, 구간 분해 | `llmd-loadgen`, `llmd-promql` |
+| 26 | [TLS 비활성화](docs/scenarios/26-tls-disable.md) | 내부 TLS off 시 정상 동작 및 성능 변화 | **실측 완료** — 처리량 +3.5% | `llmd-loadgen`, `llmd-promql` |
+| 27 | [Scorer 가중치 튜닝](docs/scenarios/27-scheduler-scorer-weights.md) | 정책별 라우팅 분포와 지연이 의도대로 바뀌는지 | **실측 완료** — hot-spot에서 부하 우선 정책 TTFT 2.5배 | `llmd-loadgen`, `llmd-promql` |
+| 28 | [외부 토크나이저](docs/scenarios/28-external-tokenizer.md) | 토크나이저가 독립 리소스로 분리되는지 | **실측 완료** — 독립 서비스 분리, 텍스트 모델 이득 없음 | `llmd-loadgen`, `llmd-promql` |
+| 29 | [Controlled Deployment](docs/scenarios/29-controlled-deployment.md) | v1/v2 가중치 분할 중 요청 유실이 없는지 | **실측 완료(제약)** — 가중치 90:10→92:8, 다중 EPP 풀 시 스케줄링 미적용 | `llmd-loadgen`, `llmd-promql` |
 
 각 시나리오 문서는 목적/사전조건/절차(하네스 명령어)/예상 결과/실측 결과(실행 후 채움) 구조로 통일되어
 있어, 다른 사람이 문서만 보고 그대로 재현할 수 있다. "실행 대기"인 시나리오는 스크립트·문서가 모두
@@ -85,7 +93,7 @@ flowchart LR
 
 ## 사전 조건
 
-- OCP 4.19.9+, RHOAI 3.3+ (`LLMInferenceService`/`modelsAsService` 지원, 3.4.4로 검증됨)
+- OCP 4.19.9+, RHOAI 3.3+ (`LLMInferenceService` 지원). 시나리오 11~14는 3.4.4, 하네스(`llmd-prereq`, `maas`, EPP 배포)는 3.5.1에서 검증
 - 기본 클러스터(bastion→cluster→GPU→RHOAI→모니터링→로깅)는
   [openshift-aws-harness](https://github.com/jangminjun/openshift-aws-harness)로 구축 (`./harness.sh all`)
   — 이 리포는 그 위에 llm-d/MaaS 관련 설정만 추가한다.
@@ -105,11 +113,20 @@ cp AGENT.md.example AGENT.md
 [openshift-aws-harness](https://github.com/jangminjun/openshift-aws-harness)의 `harness/README.md`를
 따라간다. 아래 명령은 전부 **이 리포의 `harness/` 디렉터리**에서 실행한다 (`cd harness`).
 
-1. **관측성 스택 확인** — 이미 Managed 상태여야 함:
+0. **실행 위치** — `HARNESS_EXEC`(config.env, 기본 `auto`)에 따라 `remote/*.sh`가 로컬 `oc` 세션
+   (`oc whoami` 성공 시) 또는 bastion SSH로 실행된다. bastion 없이도 `oc login`만으로 전체 하네스를 사용할 수 있다.
+1. **llm-d 선행조건 점검·준비** (idempotent) — DSC Ready, `LLMInferenceService` CRD, Gateway, `hf-hub`
+   확인 후 User Workload Monitoring 활성화, Grafana(`gpu-monitoring`) 설치, 가용 GPU 수를 보고한다:
    ```sh
-   oc get dsci default-dsci -o yaml | grep -A3 monitoring:
+   ./harness.sh llmd-prereq
+   oc get cm cluster-monitoring-config -n openshift-monitoring -o yaml   # enableUserWorkload: true
+   oc get grafana,grafanadatasource -n gpu-monitoring
    ```
-2. **MaaS/RHCL 활성화** (한 번만, idempotent):
+   가용 GPU가 0이면 `oc scale machineset <gpu-machineset> -n openshift-machine-api --replicas=N`.
+   모델/리소스 기본값(`LLMD_MODEL_URI`, `LLMD_MEMORY`, `LLMD_MAX_MODEL_LEN`)은 GPU 노드 사양에 맞게
+   `config.env`에서 조정한다 (g4dn.xlarge: 1.5B/8Gi/8192, g5.2xlarge: 7B/16Gi/16384).
+   `GPU_INSTANCE_TYPE`을 비워두면 GPU 노드에서 자동 탐지한다.
+2. **MaaS/RHCL 활성화** (idempotent, RHOAI 버전 자동 판별):
    ```sh
    ./harness.sh maas
    ```
@@ -158,15 +175,15 @@ CLI 결과 말고 브라우저로 직접 보고 싶으면 (URL은 `AGENT.md` 참
 
 ```
 harness/
-  harness.sh               llm-d/MaaS 하네스 진입점 (maas, llmd-*, tracing, scenario11-14)
-  config.env                bastion 접속 정보 (BASTION_IP, SSH_KEY_PATH)
-  lib.sh                     ssh_bastion/scp_to_bastion 헬퍼
+  harness.sh               llm-d/MaaS 하네스 진입점 (llmd-prereq, maas, llmd-*, tracing, scenario11-14)
+  config.env                실행 위치(HARNESS_EXEC), bastion 접속 정보, 모델/GPU 기본값
+  lib.sh                     실행 위치 판별 + ssh_bastion/scp_to_bastion 헬퍼 (local 모드에서는 로컬 실행)
   remote/*.sh                 실제 원격 실행 스크립트 (SSH로 bastion에 파이프됨)
   remote/dashboards/           llmd-observability.json (Grafana 대시보드)
 docs/
   test-cases.md                    QA 테스트케이스 (TC-01 ~ TC-05, 절차/기대결과)
   test-results-2026-09-07.md       실클러스터 실행 결과 (실측치)
-  scenarios/                       분산 환경 활용 시나리오 (11~16, 목적/절차/예상·실측 결과)
+  scenarios/                       분산 환경 활용 시나리오 (11~16), llm-d GA 기능 데모 (21~29, llmd-ga-overview.md)
 manifests/
   dsci-observability-patch.yaml   관측성 스택 활성화 확인/패치용 DSCI CR 예시
   servicemonitor-llmd.yaml        (참고용) 컨트롤러가 자동 생성하는 ServiceMonitor/PodMonitor 사본

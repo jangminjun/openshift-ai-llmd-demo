@@ -13,7 +13,8 @@
 # failures inside the vLLM engine's generation loop, not request-validation
 # rejections. See jangminjun/monitoring-llmd-rhoai for the full test record.
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:?set LLMD_NAMESPACE to the LLMInferenceService namespace}"
 MONITORING_NAMESPACE="${MONITORING_NAMESPACE:?set MONITORING_NAMESPACE}"

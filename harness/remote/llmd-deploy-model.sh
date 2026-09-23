@@ -11,17 +11,31 @@
 # see docs/scenarios/qwen3.5-compat-check.md in monitoring-llmd-rhoai for
 # how to check compatibility before betting a whole scenario run on it.
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:?set LLMD_NAMESPACE}"
 LLMD_NAME="${LLMD_NAME:-llmd-demo}"
 MODEL_URI="${LLMD_MODEL_URI:-hf://Qwen/Qwen2.5-7B-Instruct}"
 MODEL_NAME="${LLMD_MODEL_NAME:-$(basename "$MODEL_URI")}"
 REPLICAS="${LLMD_REPLICAS:-1}"
-GPU_INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-g5.2xlarge}"
+# Empty = auto-detect from the first GPU node (g5.2xlarge / g4dn.xlarge ...).
+GPU_INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-}"
+# Container memory request/limit. Must fit the GPU node's allocatable memory
+# (g4dn.xlarge: ~14Gi allocatable -> 16Gi is unschedulable; use 8Gi).
+MEMORY="${LLMD_MEMORY:-16Gi}"
 MAX_MODEL_LEN="${LLMD_MAX_MODEL_LEN:-16384}"
 GPU_MEM_UTIL="${LLMD_GPU_MEM_UTIL:-0.90}"
 EXTRA_VLLM_ARGS="${LLMD_EXTRA_VLLM_ARGS:-}"
+# true: spec.router.scheduler -> controller creates EPP + InferencePool and the
+# HTTPRoute targets the InferencePool. false: HTTPRoute -> workload Service
+# directly (no EPP; scorers/flow control/InferenceObjective unavailable).
+SCHEDULER="${LLMD_SCHEDULER:-true}"
+# Controlled deployment: LLMInferenceServices in the same namespace with the
+# same model name and route group share the model-based routing rule
+# (publishers/<ns>/models/<model>) and split it by weight.
+ROUTE_GROUP="${LLMD_ROUTE_GROUP:-}"
+ROUTE_WEIGHT="${LLMD_ROUTE_WEIGHT:-}"
 # Gateway name varies by how MaaS was set up -- this harness's maas.sh
 # creates "openshift-ai-inference"; some RHOAI dashboard-driven setups
 # create "maas-default-gateway" instead. Auto-detect if not overridden
@@ -56,6 +70,12 @@ YAML
 
 oc get namespace "$LLMD_NAMESPACE" &>/dev/null || oc create namespace "$LLMD_NAMESPACE"
 
+if [ -z "$GPU_INSTANCE_TYPE" ]; then
+  GPU_INSTANCE_TYPE=$(oc get nodes -l nvidia.com/gpu.present=true     -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null)
+  [ -n "$GPU_INSTANCE_TYPE" ] || { echo "No GPU node found (nvidia.com/gpu.present=true)." >&2; exit 1; }
+fi
+echo "GPU node type: $GPU_INSTANCE_TYPE, memory: $MEMORY"
+
 if [ -z "$GATEWAY_NAME" ]; then
   GATEWAY_NAME=$(oc get gateway -n "$GATEWAY_NAMESPACE" -o jsonpath='{.items[?(@.metadata.name=="maas-default-gateway")].metadata.name}' 2>/dev/null)
   [ -z "$GATEWAY_NAME" ] && GATEWAY_NAME=$(oc get gateway -n "$GATEWAY_NAMESPACE" -o jsonpath='{.items[?(@.metadata.name=="openshift-ai-inference")].metadata.name}' 2>/dev/null)
@@ -66,6 +86,12 @@ if [ -z "$GATEWAY_NAME" ]; then
   exit 1
 fi
 echo "Using gateway: $GATEWAY_NAMESPACE/$GATEWAY_NAME"
+
+ROUTE_SPEC="{}"
+[ -n "$ROUTE_GROUP" ] && ROUTE_SPEC="{group: ${ROUTE_GROUP}${ROUTE_WEIGHT:+, weight: ${ROUTE_WEIGHT}}}"
+SCHEDULER_BLOCK=""
+[ "$SCHEDULER" = "true" ] && SCHEDULER_BLOCK="    scheduler: {}"
+echo "EPP scheduler: $SCHEDULER"
 
 echo "=== LLMInferenceService $LLMD_NAME ($MODEL_URI, $REPLICAS replica(s)) in $LLMD_NAMESPACE ==="
 oc apply -f - <<YAML
@@ -86,7 +112,8 @@ spec:
       refs:
       - name: ${GATEWAY_NAME}
         namespace: ${GATEWAY_NAMESPACE}
-    route: {}
+    route: ${ROUTE_SPEC}
+${SCHEDULER_BLOCK}
   template:
     containers:
     - name: main
@@ -96,11 +123,11 @@ spec:
       resources:
         limits:
           cpu: "2"
-          memory: 16Gi
+          memory: ${MEMORY}
           nvidia.com/gpu: "1"
         requests:
           cpu: "2"
-          memory: 16Gi
+          memory: ${MEMORY}
           nvidia.com/gpu: "1"
     nodeSelector:
       node.kubernetes.io/instance-type: ${GPU_INSTANCE_TYPE}
@@ -111,10 +138,14 @@ spec:
 YAML
 
 echo "Waiting for LLMInferenceService to become Ready (up to 10m -- includes model download)..."
+# Ready alone is stale right after an update (e.g. adding the scheduler):
+# also require the controller to have observed the current generation.
 for _ in $(seq 1 60); do
   ready=$(oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-  [ "$ready" = "True" ] && break
+  gen=$(oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" \
+    -o jsonpath='{.metadata.generation}/{.status.observedGeneration}' 2>/dev/null || echo "")
+  [ "$ready" = "True" ] && [ "${gen%/*}" = "${gen#*/}" ] && break
   sleep 10
 done
 oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE"
@@ -132,5 +163,14 @@ if [ "$ready" != "True" ]; then
   exit 1
 fi
 
+if [ "$SCHEDULER" = "true" ]; then
+  echo "=== EPP / InferencePool ==="
+  oc rollout status deploy/"${LLMD_NAME}-kserve-router-scheduler" -n "$LLMD_NAMESPACE" --timeout=300s
+  oc get inferencepool,deploy -n "$LLMD_NAMESPACE"
+  oc get httproute -n "$LLMD_NAMESPACE" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.rules[0].backendRefs[0].kind}{"\n"}{end}'
+fi
+
 echo "Ready. Internal endpoint (from any pod in-cluster, or via oc port-forward to the workload svc):"
-oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" -o jsonpath='{.status.addresses}' | python3 -m json.tool
+oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" \
+  -o jsonpath='{range .status.addresses[*]}{.name}{"\t"}{.url}{"\n"}{end}'

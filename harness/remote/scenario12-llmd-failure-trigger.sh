@@ -8,7 +8,10 @@
 # finished_reason="error"). Runs ON the bastion. Assumes
 # llmd-deploy-model.sh (via `harness.sh llmd-deploy-model`) already ran.
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
+# python3 may be a non-functional Store alias on Windows (local mode) -> fall back to python.
+PY=python3; python3 -c 'pass' 2>/dev/null || PY=python
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:?set LLMD_NAMESPACE}"
 LLMD_NAME="${LLMD_NAME:-llmd-demo}"
@@ -80,7 +83,7 @@ echo ""
 echo "=== Request status codes around the outage window (last 5m) ==="
 curl -sk -H "Authorization: Bearer $TOKEN" \
   --data-urlencode "query=sum(increase(kserve_http_requests_total{namespace=\"$LLMD_NAMESPACE\"}[15m])) by (status)" \
-  "https://$ROUTE/api/v1/query" | python3 -m json.tool
+  "https://$ROUTE/api/v1/query" | "$PY" -m json.tool
 
 oc delete pod llmd-failure-traffic -n "$LLMD_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
 

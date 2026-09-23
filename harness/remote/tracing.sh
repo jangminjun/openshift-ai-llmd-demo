@@ -6,7 +6,8 @@
 # second bucket to it rather than standing up a separate object store).
 # Runs ON the bastion. Idempotent.
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
 
 MINIO_NAMESPACE="${MINIO_NAMESPACE:-minio}"
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
@@ -14,9 +15,51 @@ MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin123}"
 TRACING_NAMESPACE="${TRACING_NAMESPACE:-openshift-tempo}"
 TEMPO_BUCKET="${TEMPO_BUCKET:-tempo-traces}"
 
-if ! oc get namespace "$MINIO_NAMESPACE" &>/dev/null; then
-  echo "MinIO (namespace $MINIO_NAMESPACE) not found -- run openshift-logging first." >&2
-  exit 1
+# Reuse the MinIO openshift-logging.sh deploys when present; otherwise stand
+# up a minimal single-replica MinIO here so this harness stays self-contained.
+if ! oc get deployment minio -n "$MINIO_NAMESPACE" &>/dev/null; then
+  echo "=== MinIO not found in $MINIO_NAMESPACE -- deploying a minimal instance ==="
+  oc get namespace "$MINIO_NAMESPACE" &>/dev/null || oc create namespace "$MINIO_NAMESPACE"
+  oc apply -n "$MINIO_NAMESPACE" -f - <<YAML
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 20Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: minio}}
+  template:
+    metadata: {labels: {app: minio}}
+    spec:
+      containers:
+      - name: minio
+        image: quay.io/minio/minio:latest
+        args: ["server", "/data", "--console-address", ":9001"]
+        env:
+        - {name: MINIO_ROOT_USER, value: "${MINIO_ACCESS_KEY}"}
+        - {name: MINIO_ROOT_PASSWORD, value: "${MINIO_SECRET_KEY}"}
+        ports: [{containerPort: 9000}, {containerPort: 9001}]
+        volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: minio-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector: {app: minio}
+  ports: [{name: api, port: 9000, targetPort: 9000}]
+YAML
+  oc rollout status deployment/minio -n "$MINIO_NAMESPACE" --timeout=300s
 fi
 
 echo "=== Ensuring a $TEMPO_BUCKET bucket exists in MinIO ==="
@@ -136,6 +179,12 @@ spec:
     queryFrontend:
       jaegerQuery:
         enabled: true
+        # Operator-managed Route. A manual `oc expose` route gets pruned by the
+        # Tempo operator (observed 2026-09-23: route vanished within ~1h).
+        ingress:
+          type: route
+          route:
+            termination: edge
 YAML
 
 echo "Waiting for TempoStack pods..."
@@ -144,21 +193,14 @@ for _ in $(seq 1 30); do
   sleep 10
 done
 
-echo "=== Jaeger UI route ==="
-# The service's UI port is literally named "jaeger-ui" (not e.g. "16686-tcp")
-# -- `oc expose --port=<name>` needs that exact name or the router 503s with
-# no useful error (confirmed live 2026-09-08: a made-up port name silently
-# produced a route that always 503'd, even though the backend itself
-# answered fine over port-forward).
-if ! oc get route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" &>/dev/null; then
-  oc expose svc/tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" \
-    --port=jaeger-ui --name=llmd-tracing-jaeger-ui
-  oc patch route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" --type=merge \
-    -p '{"spec":{"tls":{"termination":"edge","insecureEdgeTerminationPolicy":"Redirect"}}}'
-fi
-JAEGER_HOST=$(oc get route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" -o jsonpath='{.spec.host}')
+echo "=== Jaeger UI route (operator-managed) ==="
+for _ in $(seq 1 30); do
+  oc get route tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" &>/dev/null && break
+  sleep 5
+done
+JAEGER_HOST=$(oc get route tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" -o jsonpath='{.spec.host}')
 
 echo ""
 echo "Tracing stack ready. OTLP gRPC ingest (for vLLM --otlp-traces-endpoint):"
-echo "  llmd-tracing-distributor.${TRACING_NAMESPACE}.svc:4317"
+echo "  tempo-llmd-tracing-distributor.${TRACING_NAMESPACE}.svc:4317"
 echo "Jaeger UI: https://${JAEGER_HOST}"
