@@ -50,6 +50,14 @@
   `inferenceservice-config`는 operator 소유라 직접 수정하지 않는다.
 - **Tempo Jaeger UI Route.** 수동 `oc expose` Route는 Tempo operator가 제거한다. TempoStack
   `jaegerQuery.ingress.type: route`를 사용한다(OpenShift OAuth 보호, API는 port-forward로 접근).
+- **Windows(Git Bash) 로컬 실행의 경로 변환.** Git Bash는 네이티브 프로그램의 argv 중 `/`로 시작하는 값을
+  Windows 경로로 바꾼다(`/mnt/models/base` → `C:/Program Files/Git/mnt/models/base`). 하네스가 EPP
+  `token-producer.modelName`에 변환된 값을 넣어 render 404 → prefix Scorer 0점이 되었다. `MSYS_NO_PATHCONV=1`을
+  전역으로 켜면 반대로 `oc --from-file=$HOME/...` 같은 실제 파일 경로가 깨진다. 컨테이너 내부 경로는
+  argv 대신 stdin으로 전달한다(`remote/scenario28-tokenizer.sh`).
+- **롤링 재기동에는 여유 GPU 1장이 필요.** 워크로드 `Deployment`는 maxSurge 1 / maxUnavailable 0이므로 GPU가
+  모두 사용 중이면 신규 pod가 `Pending`으로 남아 롤아웃이 멈춘다. vLLM 인자·트레이싱·TLS 변경 전
+  `require_free_gpu`로 점검한다.
 - **g4dn.xlarge 메모리 한도.** 할당 가능 메모리 약 14Gi에서 데몬셋 요청을 제외하면 모델 컨테이너는
   8Gi 수준이 상한이다(12Gi는 `Insufficient memory`).
 - **미해결: `openshift-ai-inference` Gateway Envoy segfault.** EPP 활성 모델의 `HTTPRoute`를 이

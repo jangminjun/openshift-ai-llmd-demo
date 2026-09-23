@@ -18,6 +18,14 @@ oc get llminferenceserviceconfig v3-5-1-kserve-config-llm-tokenizer -n redhat-od
   -o jsonpath='{.spec.router.scheduler.tokenizer.template.containers[0].image}'
 ```
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario28-llmd-tokenizer
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

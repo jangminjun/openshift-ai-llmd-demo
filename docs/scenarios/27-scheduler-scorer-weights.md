@@ -22,6 +22,14 @@ replica 2 (GPU 2), EPP 활성화. 두 정책과 두 워크로드를 교차 측�
 | W1 | 공통 system prompt(2,000 토큰) + 짧은 질문 |
 | W2 | 상호 무관한 긴 프롬프트, 높은 동시성 |
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario27-llmd-scorer-weights          # S27_WORKLOADS="W1 W2 W3", S27_SCALE
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

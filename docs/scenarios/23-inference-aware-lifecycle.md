@@ -14,6 +14,14 @@
 - `LLMInferenceService` replica 1 → 롤링 업데이트(maxSurge 1)로 GPU 2 사용
 - EPP 활성화, 지속 트래픽 클라이언트(1초 간격, 성공/실패 자체 집계)
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario23-llmd-lifecycle               # 여유 GPU 1장 필요 (maxSurge 1)
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

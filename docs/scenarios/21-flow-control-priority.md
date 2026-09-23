@@ -25,6 +25,14 @@ flowchart LR
 - EPP 활성 `LLMInferenceService`, MaaS 등록, API 키(`./harness.sh maas-api-key`)
 - 포화 재현: vLLM `--max-num-seqs=4`
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario21-llmd-flow-control            # S21_DETECTOR=utilization 로 우선순위 역전 재현
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

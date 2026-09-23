@@ -14,6 +14,16 @@
 - vLLM 인자: `--max-model-len=8192 --limit-mm-per-prompt={"image":1}`
 - 입력: 고정 이미지 3종(base64 data URL, 외부 네트워크 의존 제거)
 
+## 하네스 실행
+
+```sh
+./harness.sh llmd-test-down && ./harness.sh scenario24-llmd-vlm-up
+./harness.sh scenario24-llmd-vlm-run
+./harness.sh scenario24-llmd-vlm-down && ./harness.sh llmd-test-up
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

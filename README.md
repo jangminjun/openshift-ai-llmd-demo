@@ -77,15 +77,15 @@ flowchart LR
 | 14 | [지연(delay) 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 중 어디가 병목인지 메트릭으로 구분 | **실측 완료 + 재검증** — decode가 두 번 다 단독 병목(9.6s/4.9s), 하네스 이전 후에도 재현됨 | `scenario14-llmd-latency-*` |
 | 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티GPU 텐서 분할 서빙 | **계획만** (멀티GPU 노드 필요) | 미구현 |
 | 16 | [Expert 병렬화(EP, MoE)](docs/scenarios/16-expert-parallelism.md) | MoE 모델의 expert 분산 | **계획만** (MoE 모델+멀티GPU 필요) | 미구현 |
-| 21 | [우선순위 Flow Control](docs/scenarios/21-flow-control-priority.md) | 포화 시 대화형 요청이 배치보다 우선 처리되는지 (`InferenceObjective`) | **실측 완료** — 대화형 TTFT 1.7 s vs 24.3 s(`concurrency-detector` 필요) | `llmd-loadgen`, `llmd-promql` |
-| 22 | [EPP Scorer 4종](docs/scenarios/22-epp-scorers.md) | KV 캐시 적재 pod로 라우팅되어 TTFT가 단축되는지 | **실측 완료** — 캐시 적중률 83% vs 58%, TTFT p50 10배 | `llmd-loadgen`, `llmd-promql` |
-| 23 | [추론 인지 Pod 라이프사이클](docs/scenarios/23-inference-aware-lifecycle.md) | 롤링 업데이트 중 로딩 중인 pod로 라우팅되지 않는지 | **실측 완료** — 롤링 업데이트 중 유실 0건 | `llmd-loadgen`, `llmd-promql` |
-| 24 | [멀티모달 라우팅](docs/scenarios/24-multimodal-routing.md) | 동일 이미지 재요청이 캐시 pod로 가는지 | **실측 완료** — 멀티모달 캐시 적중률 76% vs 61%, TTFT 3.8배 | `llmd-loadgen`, `llmd-promql` |
-| 25 | [E2E 분산 트레이싱](docs/scenarios/25-e2e-tracing.md) | `spec.tracing`으로 Gateway→EPP→vLLM trace가 연결되는지 | **실측 완료** — EPP→vLLM 단일 trace, 구간 분해 | `llmd-loadgen`, `llmd-promql` |
-| 26 | [TLS 비활성화](docs/scenarios/26-tls-disable.md) | 내부 TLS off 시 정상 동작 및 성능 변화 | **실측 완료** — 처리량 +3.5% | `llmd-loadgen`, `llmd-promql` |
-| 27 | [Scorer 가중치 튜닝](docs/scenarios/27-scheduler-scorer-weights.md) | 정책별 라우팅 분포와 지연이 의도대로 바뀌는지 | **실측 완료** — hot-spot에서 부하 우선 정책 TTFT 2.5배 | `llmd-loadgen`, `llmd-promql` |
-| 28 | [외부 토크나이저](docs/scenarios/28-external-tokenizer.md) | 토크나이저가 독립 리소스로 분리되는지 | **실측 완료** — 독립 서비스 분리, 텍스트 모델 이득 없음 | `llmd-loadgen`, `llmd-promql` |
-| 29 | [Controlled Deployment](docs/scenarios/29-controlled-deployment.md) | v1/v2 가중치 분할 중 요청 유실이 없는지 | **실측 완료(제약)** — 가중치 90:10→92:8, 다중 EPP 풀 시 스케줄링 미적용 | `llmd-loadgen`, `llmd-promql` |
+| 21 | [우선순위 Flow Control](docs/scenarios/21-flow-control-priority.md) | 포화 시 대화형 요청이 배치보다 우선 처리되는지 (`InferenceObjective`) | **실측 완료** — 대화형 TTFT 1.7 s vs 24.3 s(`concurrency-detector` 필요) | `scenario21-llmd-flow-control` |
+| 22 | [EPP Scorer 4종](docs/scenarios/22-epp-scorers.md) | KV 캐시 적재 pod로 라우팅되어 TTFT가 단축되는지 | **실측 완료** — 캐시 적중률 83% vs 58%, TTFT p50 10배 | `scenario22-llmd-epp-scorers` |
+| 23 | [추론 인지 Pod 라이프사이클](docs/scenarios/23-inference-aware-lifecycle.md) | 롤링 업데이트 중 로딩 중인 pod로 라우팅되지 않는지 | **실측 완료** — 롤링 업데이트 중 유실 0건 | `scenario23-llmd-lifecycle` |
+| 24 | [멀티모달 라우팅](docs/scenarios/24-multimodal-routing.md) | 동일 이미지 재요청이 캐시 pod로 가는지 | **실측 완료** — 멀티모달 캐시 적중률 76% vs 61%, TTFT 3.8배 | `scenario24-llmd-vlm-{up,run,down}` |
+| 25 | [E2E 분산 트레이싱](docs/scenarios/25-e2e-tracing.md) | `spec.tracing`으로 Gateway→EPP→vLLM trace가 연결되는지 | **실측 완료** — EPP→vLLM 단일 trace, 구간 분해 | `scenario25-llmd-tracing` |
+| 26 | [TLS 비활성화](docs/scenarios/26-tls-disable.md) | 내부 TLS off 시 정상 동작 및 성능 변화 | **실측 완료** — 처리량 +3.5% | `scenario26-llmd-tls` |
+| 27 | [Scorer 가중치 튜닝](docs/scenarios/27-scheduler-scorer-weights.md) | 정책별 라우팅 분포와 지연이 의도대로 바뀌는지 | **실측 완료** — hot-spot에서 부하 우선 정책 TTFT 2.5배 | `scenario27-llmd-scorer-weights` |
+| 28 | [외부 토크나이저](docs/scenarios/28-external-tokenizer.md) | 토크나이저가 독립 리소스로 분리되는지 | **실측 완료** — 독립 서비스 분리, 텍스트 모델 이득 없음 | `scenario28-llmd-tokenizer` |
+| 29 | [Controlled Deployment](docs/scenarios/29-controlled-deployment.md) | v1/v2 가중치 분할 중 요청 유실이 없는지 | **실측 완료(제약)** — 가중치 90:10→92:8, 다중 EPP 풀 시 스케줄링 미적용 | `scenario29-llmd-canary-{up,shift,down}` |
 
 각 시나리오 문서는 목적/사전조건/절차(하네스 명령어)/예상 결과/실측 결과(실행 후 채움) 구조로 통일되어
 있어, 다른 사람이 문서만 보고 그대로 재현할 수 있다. "실행 대기"인 시나리오는 스크립트·문서가 모두
@@ -178,6 +178,8 @@ harness/
   harness.sh               llm-d/MaaS 하네스 진입점 (llmd-prereq, maas, llmd-*, tracing, scenario11-14)
   config.env                실행 위치(HARNESS_EXEC), bastion 접속 정보, 모델/GPU 기본값
   lib.sh                     실행 위치 판별 + ssh_bastion/scp_to_bastion 헬퍼 (local 모드에서는 로컬 실행)
+  remote/lib/bench.sh         시나리오 공통 함수 (부하 Job, Thanos, pod 카운터, EPP 설정 교체, 사전 점검)
+  tools/loadgen.py            클러스터 내 부하 생성기 (스트리밍 TTFT/E2E, 클라이언트 측 코드 집계)
   remote/*.sh                 실제 원격 실행 스크립트 (SSH로 bastion에 파이프됨)
   remote/dashboards/           llmd-observability.json (Grafana 대시보드)
 docs/

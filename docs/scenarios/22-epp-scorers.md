@@ -41,6 +41,14 @@ spec:
             - {pluginRef: max-score-picker}
 ```
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario22-llmd-epp-scorers             # S22_DOCS / S22_REQUESTS 로 규모 조정
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh
@@ -89,11 +97,7 @@ histogram_quantile(0.5, sum by (le) (rate(kserve_vllm:time_to_first_token_second
 기본 EPP의 적중률 83.2%는 문서당 최초 1회만 miss가 발생하는 이론 상한(5/6 = 83.3%)과 일치한다.
 즉 동일 문서 요청이 KV 캐시를 보유한 pod로 일관되게 라우팅되었으며, 분포는 균등하게 유지되었다.
 
-재현:
-```sh
-./harness.sh llmd-loadgen   # LLMD_NAMESPACE=llmd-test LLMD_NAME=llmd-test PROMPT_MODE=multi-prefix DOCS=150 PREFIX_TOKENS=3000 CONCURRENCY=8 REQUESTS=900 MAX_TOKENS=16
-oc patch llminferenceservice llmd-test -n llmd-test --type=merge -p '{"spec":{"router":{"scheduler":{"config":{"inline":{...random-picker...}}}}}}'
-```
+재현: `./harness.sh scenario22-llmd-epp-scorers` (기본 EPP → random-picker → 기본값 원복).
 
 ## 운영상 유의 사항
 

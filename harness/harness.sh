@@ -19,7 +19,17 @@
 #   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
 #   llmd-monitoring                         PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
 #   tracing                                   COO + RHBO(OpenTelemetry) + Tempo Operator + TempoStack (llm-d request tracing)
-#   scenario29-llmd-canary-{up,weights,down}  controlled deployment: v1/v2 route group, weighted split via MaaS
+#   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
+#   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
+#   scenario22-llmd-epp-scorers         default EPP vs random-picker, multi-document workload
+#   scenario23-llmd-lifecycle           rolling update under continuous traffic
+#   scenario24-llmd-vlm-{up,run,down}   multimodal routing on a VLM (needs llmd-test-down first)
+#   scenario25-llmd-tracing             spec.tracing -> Tempo, prints spans per request
+#   scenario26-llmd-tls                 TLS on vs off (DSC, cluster-wide), restores
+#   scenario27-llmd-scorer-weights      cache-first vs load-first policies x W1/W2/W3
+#   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
+#   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment (needs llmd-test-down first)
+#   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #   scenario11-llmd-dp-{start,scale,load,stop}  data parallelism: 1 replica vs N, throughput comparison
 #   scenario12-llmd-failure-{start,trigger,stop}  failure & recovery: kill a workload pod under traffic
 #   scenario13-llmd-tracing-{demo,stop}             request tracing: OTLP-enabled model, per-request trace in Tempo
@@ -36,6 +46,19 @@ source ./config.env
 source ./lib.sh
 
 MONITORING_NAMESPACE="${MONITORING_NAMESPACE:-gpu-monitoring}"
+
+# run_bench <remote-script>|--eval <code>: prepend remote/lib/bench.sh, copy loadgen.py,
+# and pass through every scenario/loadgen/MaaS variable that is set.
+run_bench() {
+  local envs="" v src
+  for v in $(compgen -v | grep -E '^(S2[0-9]_[A-Z0-9_]+|LLMD_[A-Z_]+|LOADGEN_[A-Z_]+|MAAS_[A-Z_]+|ALLOW_MULTI_EPP|TRACING_NAMESPACE|URL|MODEL|CONCURRENCY|REQUESTS|DURATION|INTERVAL|MAX_TOKENS|PROMPT_MODE|PREFIX_TOKENS|DOCS|DOC_OFFSET|IMAGE_URLS|HEADERS|LABEL|TIMEOUT|TIMELINE)$'); do
+    [ -n "${!v:-}" ] && envs="$envs $v=$(printf '%q' "${!v}")"
+  done
+  ssh_bastion "mkdir -p ~/ocp-install"
+  scp_to_bastion ./tools/loadgen.py "~/ocp-install/loadgen.py"
+  if [ "$1" = --eval ]; then src=$(cat ./remote/lib/bench.sh; printf '\n%s\n' "$2"); else src=$(cat ./remote/lib/bench.sh "./remote/$1"); fi
+  printf '%s\n' "$src" | ssh_bastion "MONITORING_NAMESPACE='$MONITORING_NAMESPACE' $envs bash -s"
+}
 
 cmd="${1:-}"
 [ -n "$cmd" ] && shift || true
@@ -75,15 +98,7 @@ cmd_llmd_deploy_model() {
     bash -s" < ./remote/llmd-deploy-model.sh
 }
 
-cmd_llmd_loadgen() {
-  local envs="" v
-  for v in LOADGEN_NAMESPACE LOADGEN_NAME LOADGEN_WAIT LOADGEN_IMAGE LLMD_NAMESPACE LLMD_NAME URL MODEL CONCURRENCY            REQUESTS DURATION INTERVAL MAX_TOKENS PROMPT_MODE PREFIX_TOKENS DOCS DOC_OFFSET IMAGE_URLS HEADERS LABEL TIMEOUT TIMELINE; do
-    [ -n "${!v:-}" ] && envs="$envs $v=$(printf '%q' "${!v}")"
-  done
-  ssh_bastion "mkdir -p ~/ocp-install"
-  scp_to_bastion ./tools/loadgen.py "~/ocp-install/loadgen.py"
-  ssh_bastion "$envs bash -s" < ./remote/llmd-loadgen.sh
-}
+cmd_llmd_loadgen() { run_bench llmd-loadgen.sh; }
 
 cmd_llmd_promql() {
   ssh_bastion "QUERY=$(printf '%q' "${QUERY:?set QUERY}") MONITORING_NAMESPACE='$MONITORING_NAMESPACE' bash -s" < ./remote/llmd-promql.sh
@@ -105,9 +120,7 @@ cmd_tracing() { ssh_bastion 'bash -s' < ./remote/tracing.sh; }
 # tear it down before restoring other llm-d models.
 S29_NS="${LLMD_NAMESPACE:-llmd-s29}"
 cmd_scenario29_llmd_canary_up() {
-  local others
-  others=$(ssh_bastion "${KCFG_INIT} oc get inferencepool -A --no-headers 2>/dev/null" | awk -v ns="$S29_NS" '$1!=ns{print $1"/"$2}')
-  [ -z "$others" ] || log "WARNING: other InferencePools on the cluster ($others) -- scale them away first, see docs/scenarios/29."
+  LLMD_NAMESPACE="$S29_NS" run_bench --eval "require_single_epp $S29_NS"
   local v w a
   for v in "llmd-v1:${LLMD_V1_WEIGHT:-90}:" "llmd-v2:${LLMD_V2_WEIGHT:-10}:--max-num-seqs=8"; do
     IFS=: read -r n w a <<< "$v"
@@ -125,6 +138,41 @@ cmd_scenario29_llmd_canary_down() {
     ssh_bastion "${KCFG_INIT} oc delete llminferenceservice '$n' -n '$S29_NS' --ignore-not-found --wait=true"
   done
 }
+
+# --- demo model swap (Gateway allows one EPP model: 24/29 need llmd-test down) ---
+LLMD_MANIFEST="${LLMD_MANIFEST:-../manifests/llmd-test-llminferenceservice.json}"
+cmd_llmd_test_down() {
+  ssh_bastion "${KCFG_INIT} oc delete llminferenceservice ${LLMD_NAME:-llmd-test} -n ${LLMD_NAMESPACE:-llmd-test} --ignore-not-found --wait=true"
+}
+cmd_llmd_test_up() {
+  ssh_bastion "mkdir -p ~/ocp-install"
+  scp_to_bastion "$LLMD_MANIFEST" "~/ocp-install/llmd-model.json"
+  run_bench --eval 'require_single_epp "${LLMD_NAMESPACE:-llmd-test}"
+oc apply -f "$HOME/ocp-install/llmd-model.json"; sleep 5
+wait_isvc "${LLMD_NAMESPACE:-llmd-test}" "${LLMD_NAME:-llmd-test}"
+oc get llminferenceservice -n "${LLMD_NAMESPACE:-llmd-test}"'
+}
+
+# --- Scenarios 21-29: llm-d GA features (docs/scenarios/2x-*.md) ---
+cmd_scenario21() { run_bench scenario21-flow-control.sh; }
+cmd_scenario22() { run_bench scenario22-epp-scorers.sh; }
+cmd_scenario23() { run_bench scenario23-lifecycle.sh; }
+cmd_scenario24_up() {
+  LLMD_NAMESPACE=llmd-s24 run_bench --eval 'require_single_epp llmd-s24'
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm LLMD_MODEL_URI=hf://Qwen/Qwen2.5-VL-3B-Instruct LLMD_MODEL_NAME=     LLMD_REPLICAS=2 LLMD_MEMORY=8Gi LLMD_EXTRA_VLLM_ARGS="--limit-mm-per-prompt.image=1" cmd_llmd_deploy_model
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-1000000000}" cmd_maas_register_model
+}
+cmd_scenario24_run() { LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-s24}" LLMD_NAME="${LLMD_NAME:-llmd-vlm}" run_bench scenario24-multimodal.sh; }
+cmd_scenario24_down() {
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm cmd_maas_unregister_model
+  ssh_bastion "${KCFG_INIT} oc delete llminferenceservice llmd-vlm -n llmd-s24 --ignore-not-found --wait=true"
+}
+cmd_scenario25() { run_bench scenario25-tracing.sh; }
+cmd_scenario26() { run_bench scenario26-tls.sh; }
+cmd_scenario27() { run_bench scenario27-scorer-weights.sh; }
+cmd_scenario28() { run_bench scenario28-tokenizer.sh; }
+cmd_scenario29_shift() { LLMD_NAMESPACE="$S29_NS" run_bench scenario29-canary-shift.sh; }
+cmd_maas_checks() { run_bench maas-checks.sh; }
 
 # --- Scenario 11: llm-d data parallelism ---
 cmd_scenario11_llmd_dp_start() {
@@ -202,6 +250,20 @@ case "$cmd" in
   scenario29-llmd-canary-up)          cmd_scenario29_llmd_canary_up ;;
   scenario29-llmd-canary-weights)     cmd_scenario29_llmd_canary_weights ;;
   scenario29-llmd-canary-down)        cmd_scenario29_llmd_canary_down ;;
+  scenario29-llmd-canary-shift)       cmd_scenario29_shift ;;
+  llmd-test-down)                     cmd_llmd_test_down ;;
+  llmd-test-up)                       cmd_llmd_test_up ;;
+  scenario21-llmd-flow-control)       cmd_scenario21 ;;
+  scenario22-llmd-epp-scorers)        cmd_scenario22 ;;
+  scenario23-llmd-lifecycle)          cmd_scenario23 ;;
+  scenario24-llmd-vlm-up)             cmd_scenario24_up ;;
+  scenario24-llmd-vlm-run)            cmd_scenario24_run ;;
+  scenario24-llmd-vlm-down)           cmd_scenario24_down ;;
+  scenario25-llmd-tracing)            cmd_scenario25 ;;
+  scenario26-llmd-tls)                cmd_scenario26 ;;
+  scenario27-llmd-scorer-weights)     cmd_scenario27 ;;
+  scenario28-llmd-tokenizer)          cmd_scenario28 ;;
+  maas-checks)                        cmd_maas_checks ;;
   llmd-deploy-model)                  cmd_llmd_deploy_model ;;
   llmd-monitoring)                    cmd_llmd_monitoring ;;
   llmd-loadgen)                       cmd_llmd_loadgen ;;

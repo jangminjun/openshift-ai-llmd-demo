@@ -22,6 +22,14 @@ oc get cm inferenceservice-config -n redhat-ods-applications -o jsonpath='{.data
 **주의:** 전역 설정이므로 모든 `LLMInferenceService`가 재기동된다. 인라인 EPP 설정에 `metrics-data-source`
 `scheme: https`를 명시한 경우 `http`로 함께 변경해야 EPP가 vLLM 메트릭을 수집한다.
 
+## 하네스 실행
+
+```sh
+./harness.sh scenario26-llmd-tls                     # 클러스터 전역, 종료 시 원복. 여유 GPU 1장 필요
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh

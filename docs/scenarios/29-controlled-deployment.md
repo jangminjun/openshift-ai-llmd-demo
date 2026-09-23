@@ -20,6 +20,16 @@ flowchart LR
 - v1/v2: 각각 `LLMInferenceService` 1개 (GPU 2)
 - v2 변경점: 엔진 인자(예: `--max-num-seqs`) 또는 모델 버전 중 하나로 한정한다.
 
+## 하네스 실행
+
+```sh
+./harness.sh llmd-test-down && ./harness.sh scenario29-llmd-canary-up
+./harness.sh scenario29-llmd-canary-shift             # S29_STEPS="90:10 50:50 0:100"
+./harness.sh scenario29-llmd-canary-down && ./harness.sh llmd-test-up
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 **선행 조건: 동일 Gateway의 다른 EPP 모델을 먼저 내린다**(다중 InferencePool ext_proc 오배정). 시나리오 29는
@@ -99,6 +109,9 @@ oc get httproute -n llmd-s29 -o yaml | grep -B2 -A6 'v1-model-routing'
 - 버전별 경로(`/llmd-s29/llmd-v1/...`) 요청은 v2의 EPP가 처리하였으나, 선택 결과(v2 pod)가 v1 route의
   클러스터에 없어 폐기되고 v1 pod가 응답하였다.
 - 즉 가중치 분할과 응답 버전은 정확하나, 버전 내부의 llm-d 스케줄링(prefix/queue Scorer)은 적용되지 않는다.
+
+**측정 구간 길이.** 버전별 분포는 Prometheus 카운터(수집 주기 30초) 증가분으로 계산하므로 구간을 90초 이상
+(`S29_PHASE_SECS`, 기본 90)으로 둔다. 45초로 줄인 검증 실행에서는 50:50 구간이 67:33으로 측정되었다(이전 구간 혼입).
 
 ## 검증 필요 사항
 

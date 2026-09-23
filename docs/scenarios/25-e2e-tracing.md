@@ -23,6 +23,14 @@ flowchart LR
 preset 기본값: `exporter: otlp`, `exporterEndpoint: http://otel-collector:4317`,
 `sampler: parentbased_traceidratio`, `samplerArg: "0.05"`. 데모에서는 샘플링 비율을 1.0으로 올린다.
 
+## 하네스 실행
+
+```sh
+./harness.sh tracing && ./harness.sh scenario25-llmd-tracing   # 여유 GPU 1장 필요
+```
+
+수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+
 ## 절차
 
 ```sh
