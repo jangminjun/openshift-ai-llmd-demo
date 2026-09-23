@@ -96,7 +96,12 @@ flowchart LR
 
 ## 재현 방법 (에이전트/사람 공용 실행 절차)
 
-클러스터 접속 정보는 이 리포의 `AGENT.md` 참고 (`oc login ...`). 클러스터 자체를 처음부터 만들어야 한다면
+클러스터 접속 정보는 이 리포의 `AGENT.md` 참고 (`oc login ...`). `AGENT.md`는 클러스터별
+비밀정보가 들어가 `.gitignore`되어 있으므로, 처음 사용하는 경우 템플릿을 복사해 채운다:
+```sh
+cp AGENT.md.example AGENT.md
+```
+클러스터 자체를 처음부터 만들어야 한다면
 [openshift-aws-harness](https://github.com/jangminjun/openshift-aws-harness)의 `harness/README.md`를
 따라간다. 아래 명령은 전부 **이 리포의 `harness/` 디렉터리**에서 실행한다 (`cd harness`).
 
@@ -169,7 +174,8 @@ manifests/
 grafana/
   llmd-dashboard.json     TTFT·처리량·에러율 대시보드
 lessonlearn.md            프로젝트 수행 중 발견한 이슈/교훈
-AGENT.md                  클러스터 접속 정보 + 실측 아키텍처 요약 (다음 세션 재개용)
+AGENT.md.example          AGENT.md 템플릿 (커밋됨) — 복사해서 채워 쓴다
+AGENT.md                  클러스터 접속 정보 + 실측 아키텍처 요약 (다음 세션 재개용, gitignore됨)
 ```
 
 `openshift-aws-harness`(별도 리포)는 기본 클러스터 설치만 담당한다 — bastion, OpenShift, GPU 노드,
@@ -177,11 +183,4 @@ RHOAI, 모니터링/로깅 스택. MaaS/RHCL, llm-d 모델 배포, 트레이싱,
 `harness/`가 담당한다 (2026-09-08 재구성 — 예전엔 openshift-aws-harness에 같이 있었음, `lessonlearn.md`
 참고).
 
-## 임계값 (가정치, SLO 확정 전)
 
-| 지표 | 임계값 | 지속시간 |
-|---|---|---|
-| TTFT (p95) | > 2초 | 5분 |
-| 에러율 | > 5% | 5분 |
-
-> 실제 서비스 SLO가 확정되면 `manifests/prometheusrule-llmd-alerts.yaml`의 값을 갱신하세요.

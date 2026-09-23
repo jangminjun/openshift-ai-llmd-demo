@@ -2,6 +2,34 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-09 (2) — Jaeger Route를 `harness/remote/tracing.sh`를 안 거치고 수동으로 만들어서
+직접 겪은 시행착오 (하네스 자체는 문제 없었음)
+
+Tempo Jaeger UI Route가 없길래 `./harness.sh tracing`을 다시 돌리는 대신 `oc expose
+svc/tempo-llmd-tracing-query-frontend --port=jaeger-ui`를 직접 실행했다. Route는 생성됐고
+`http://`는 200이 나왔지만, `https://`로 열면 라우터가 503(기본 에러 페이지)을 반환했다 —
+`oc expose`는 `spec.tls`가 없는 http 전용 Route를 만들기 때문. 나중에 `harness/remote/tracing.sh`
+소스를 다시 읽어보니 이미 이 문제를 알고(2026-09-08(4) 항목의 포트 이름 gotcha 옆에 주석으로
+남겨둠) `oc expose` 직후 `oc patch route ... -p '{"spec":{"tls":{"termination":"edge",
+"insecureEdgeTerminationPolicy":"Redirect"}}}'`를 자동으로 붙이고, 이름도
+`llmd-tracing-jaeger-ui`로 고정해뒀다 — **하네스 스크립트는 이미 맞게 짜여 있었고, 내가 그
+스크립트를 확인하지 않고 임의로 재현해서 시간을 낭비한 것.** **교훈: 리포에 이미 전용
+스크립트/하네스 커맨드가 있는 작업은 스크립트를 다시 읽거나 그냥 하네스 커맨드를 재실행하는
+쪽을 먼저 시도할 것 — 겉보기에 간단해 보이는 `oc expose` 한 줄도, 이미 과거에 겪은 gotcha를
+피하려고 몇 단계가 더 붙어있을 수 있다.**
+
+## 2026-09-09 — 프로젝트 재사용성 점검 중 발견: AGENT.md가 커밋된 적 없음
+
+README와 lessonlearn.md 여러 곳에서 `AGENT.md`(클러스터 접속 정보, 실측 아키텍처 요약,
+"다음 세션 재개용")를 핵심 참조 문서로 안내하는데, 실제로는 `.gitignore`에 등록되어 있고
+git 히스토리에도 커밋된 적이 없었다 — 즉 README의 재현 절차를 그대로 따라가면 1단계부터
+존재하지 않는 파일을 참고하게 되는 상태였다. 클러스터별 비밀정보(관리자 비밀번호, bastion IP
+등)가 들어가서 의도적으로 gitignore한 것으로 보이지만, 그 결과 새 세션/새 사람이 이 리포만
+받았을 때 "무엇을 채워야 하는지" 알 방법이 없었다. **교훈: 비밀정보가 들어가서 커밋하지 않는
+파일이라도, 그 파일이 어떤 항목을 담아야 하는지 보여주는 템플릿(`*.example`)은 커밋해둬야
+"불러서 바로 사용 가능"이 실제로 성립한다 — README에 파일명만 언급하는 것으로는 부족하다.**
+`AGENT.md.example`을 추가해 해결.
+
 ## 2026-09-08 (4) — 하네스 리포 재구성 + UI(Grafana/Jaeger) 접근 검증
 
 1. **GrafanaDashboard CR의 `datasources`(이름 기반) 입력 매핑이 실제로는 안 먹는다.** `datasources:
