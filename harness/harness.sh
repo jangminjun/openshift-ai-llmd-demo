@@ -9,17 +9,35 @@
 # underlying remote scripts are idempotent.
 #
 # Usage: ./harness.sh <subcommand> [args]
-#   maas                                install RHCL (Kuadrant/Authorino) + enable modelsAsService in the DSC
+#   llmd-prereq                         check/prepare llm-d prerequisites (UWM, Grafana, CRD, Gateway, free GPU)
+#   maas                                install RHCL + enable MaaS (auto: RHOAI 3.5+ maas.sh / 3.3-3.4 maas-rhoai34.sh)
+#   maas-register-model                 register an LLMInferenceService with MaaS (LLMD_NAMESPACE/LLMD_NAME, MAAS_GROUP/MAAS_USERS)
+#   maas-unregister-model               remove an LLMInferenceService from MaaS (LLMD_NAMESPACE/LLMD_NAME)
+#   maas-api-key                        mint a MaaS API key for the oc user -> Secret llmd-bench/loadgen-token (used by llmd-loadgen)
 #   llmd-deploy-model                     deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
+#   llmd-loadgen                        in-cluster load Job via tools/loadgen.py (LLMD_NAMESPACE/LLMD_NAME or URL/MODEL; see loadgen.py)
+#   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
 #   llmd-monitoring                         PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
 #   tracing                                   COO + RHBO(OpenTelemetry) + Tempo Operator + TempoStack (llm-d request tracing)
+#   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
+#   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
+#   scenario22-llmd-epp-scorers         default EPP vs random-picker, multi-document workload
+#   scenario23-llmd-lifecycle           rolling update under continuous traffic
+#   scenario24-llmd-vlm-{up,run,down}   multimodal routing on a VLM (needs llmd-test-down first)
+#   scenario25-llmd-tracing             spec.tracing -> Tempo, prints spans per request
+#   scenario26-llmd-tls                 TLS on vs off (DSC, cluster-wide), restores
+#   scenario27-llmd-scorer-weights      cache-first vs load-first policies x W1/W2/W3
+#   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
+#   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment (needs llmd-test-down first)
+#   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #   scenario11-llmd-dp-{start,scale,load,stop}  data parallelism: 1 replica vs N, throughput comparison
 #   scenario12-llmd-failure-{start,trigger,stop}  failure & recovery: kill a workload pod under traffic
 #   scenario13-llmd-tracing-{demo,stop}             request tracing: OTLP-enabled model, per-request trace in Tempo
 #   scenario14-llmd-latency-{start,diagnose,stop}     latency diagnosis: queue/prefill/decode breakdown
 #
-# Config: harness/config.env (bastion IP, SSH key, cluster name). Cluster
-# access details also documented in ../AGENT.md.
+# Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
+# defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
+# current `oc login` session (no bastion needed). Cluster access: ../AGENT.md.
 set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,18 +47,61 @@ source ./lib.sh
 
 MONITORING_NAMESPACE="${MONITORING_NAMESPACE:-gpu-monitoring}"
 
+# run_bench <remote-script>|--eval <code>: prepend remote/lib/bench.sh, copy loadgen.py,
+# and pass through every scenario/loadgen/MaaS variable that is set.
+run_bench() {
+  local envs="" v src
+  for v in $(compgen -v | grep -E '^(S2[0-9]_[A-Z0-9_]+|LLMD_[A-Z_]+|LOADGEN_[A-Z_]+|MAAS_[A-Z_]+|ALLOW_MULTI_EPP|TRACING_NAMESPACE|URL|MODEL|CONCURRENCY|REQUESTS|DURATION|INTERVAL|MAX_TOKENS|PROMPT_MODE|PREFIX_TOKENS|DOCS|DOC_OFFSET|IMAGE_URLS|HEADERS|LABEL|TIMEOUT|TIMELINE)$'); do
+    [ -n "${!v:-}" ] && envs="$envs $v=$(printf '%q' "${!v}")"
+  done
+  ssh_bastion "mkdir -p ~/ocp-install"
+  scp_to_bastion ./tools/loadgen.py "~/ocp-install/loadgen.py"
+  if [ "$1" = --eval ]; then src=$(cat ./remote/lib/bench.sh; printf '\n%s\n' "$2"); else src=$(cat ./remote/lib/bench.sh "./remote/$1"); fi
+  printf '%s\n' "$src" | ssh_bastion "MONITORING_NAMESPACE='$MONITORING_NAMESPACE' $envs bash -s"
+}
+
 cmd="${1:-}"
 [ -n "$cmd" ] && shift || true
+[ -n "$cmd" ] && resolve_exec_mode
 
-cmd_maas()         { ssh_bastion 'bash -s' < ./remote/maas.sh; }
+cmd_llmd_prereq() {
+  ssh_bastion "MONITORING_NAMESPACE='$MONITORING_NAMESPACE' bash -s" < ./remote/llmd-prereq.sh
+}
+
+# RHOAI 3.5+ (DSC has spec.components.aigateway) -> maas.sh,
+# RHOAI 3.3/3.4 (kserve.modelsAsService) -> maas-rhoai34.sh.
+cmd_maas() {
+  local script=maas.sh
+  ssh_bastion "${KCFG_INIT} oc explain datasciencecluster.spec.components.aigateway" >/dev/null 2>&1     || script=maas-rhoai34.sh
+  log "MaaS setup script: remote/$script"
+  ssh_bastion 'bash -s' < "./remote/$script"
+}
+
+cmd_maas_register_model() {
+  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:?set LLMD_NAMESPACE}' LLMD_NAME='${LLMD_NAME:?set LLMD_NAME}'     MAAS_GROUP='${MAAS_GROUP:-llmd-demo}' MAAS_USERS='${MAAS_USERS:-}' MAAS_TOKEN_LIMIT='${MAAS_TOKEN_LIMIT:-100000}'     MAAS_TOKEN_WINDOW='${MAAS_TOKEN_WINDOW:-1h}' MAAS_PRIORITY='${MAAS_PRIORITY:-10}'     bash -s" < ./remote/maas-register-model.sh
+}
+
+cmd_maas_unregister_model() {
+  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:?set LLMD_NAMESPACE}' LLMD_NAME='${LLMD_NAME:?set LLMD_NAME}'     MAAS_GROUP='${MAAS_GROUP:-llmd-demo}' bash -s" < ./remote/maas-unregister-model.sh
+}
+
+cmd_maas_api_key() {
+  ssh_bastion "KEY_NAME='${KEY_NAME:-llmd-loadgen}' KEY_NAMESPACE='${KEY_NAMESPACE:-llmd-bench}' bash -s" < ./remote/maas-api-key.sh
+}
 
 cmd_llmd_deploy_model() {
   ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:?set LLMD_NAMESPACE}' LLMD_NAME='${LLMD_NAME:-llmd-demo}' \
     LLMD_MODEL_URI='${LLMD_MODEL_URI:-}' LLMD_MODEL_NAME='${LLMD_MODEL_NAME:-}' LLMD_REPLICAS='${LLMD_REPLICAS:-1}' \
-    GPU_INSTANCE_TYPE='${GPU_INSTANCE_TYPE:-g5.2xlarge}' LLMD_MAX_MODEL_LEN='${LLMD_MAX_MODEL_LEN:-16384}' \
-    LLMD_GPU_MEM_UTIL='${LLMD_GPU_MEM_UTIL:-0.90}' LLMD_EXTRA_VLLM_ARGS='${LLMD_EXTRA_VLLM_ARGS:-}' \
+    GPU_INSTANCE_TYPE='${GPU_INSTANCE_TYPE:-}' LLMD_MEMORY='${LLMD_MEMORY:-16Gi}' LLMD_MAX_MODEL_LEN='${LLMD_MAX_MODEL_LEN:-16384}' \
+    LLMD_GPU_MEM_UTIL='${LLMD_GPU_MEM_UTIL:-0.90}' LLMD_SCHEDULER='${LLMD_SCHEDULER:-true}'     LLMD_ROUTE_GROUP='${LLMD_ROUTE_GROUP:-}' LLMD_ROUTE_WEIGHT='${LLMD_ROUTE_WEIGHT:-}' LLMD_EXTRA_VLLM_ARGS='${LLMD_EXTRA_VLLM_ARGS:-}' \
     LLMD_GATEWAY_NAME='${LLMD_GATEWAY_NAME:-}' LLMD_GATEWAY_NAMESPACE='${LLMD_GATEWAY_NAMESPACE:-openshift-ingress}' \
     bash -s" < ./remote/llmd-deploy-model.sh
+}
+
+cmd_llmd_loadgen() { run_bench llmd-loadgen.sh; }
+
+cmd_llmd_promql() {
+  ssh_bastion "QUERY=$(printf '%q' "${QUERY:?set QUERY}") MONITORING_NAMESPACE='$MONITORING_NAMESPACE' bash -s" < ./remote/llmd-promql.sh
 }
 
 cmd_llmd_monitoring() {
@@ -52,6 +113,66 @@ cmd_llmd_monitoring() {
 }
 
 cmd_tracing() { ssh_bastion 'bash -s' < ./remote/tracing.sh; }
+
+# --- Scenario 29: controlled deployment (route group + weight) ---
+# Needs to be the only EPP-enabled model on the Gateway (multi-InferencePool
+# ext_proc mis-assignment, lessonlearn.md 2026-09-23) -- bring it up last and
+# tear it down before restoring other llm-d models.
+S29_NS="${LLMD_NAMESPACE:-llmd-s29}"
+cmd_scenario29_llmd_canary_up() {
+  LLMD_NAMESPACE="$S29_NS" run_bench --eval "require_single_epp $S29_NS"
+  local v w a
+  for v in "llmd-v1:${LLMD_V1_WEIGHT:-90}:" "llmd-v2:${LLMD_V2_WEIGHT:-10}:--max-num-seqs=8"; do
+    IFS=: read -r n w a <<< "$v"
+    LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" LLMD_REPLICAS=1 LLMD_ROUTE_GROUP=chat LLMD_ROUTE_WEIGHT="$w"       LLMD_EXTRA_VLLM_ARGS="$a" cmd_llmd_deploy_model
+    LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-1000000000}" cmd_maas_register_model
+  done
+}
+cmd_scenario29_llmd_canary_weights() {
+  ssh_bastion "${KCFG_INIT}     oc patch llminferenceservice llmd-v1 -n '$S29_NS' --type=merge -p '{\"spec\":{\"router\":{\"route\":{\"group\":\"chat\",\"weight\":${LLMD_V1_WEIGHT:?set LLMD_V1_WEIGHT}}}}}';     oc patch llminferenceservice llmd-v2 -n '$S29_NS' --type=merge -p '{\"spec\":{\"router\":{\"route\":{\"group\":\"chat\",\"weight\":${LLMD_V2_WEIGHT:?set LLMD_V2_WEIGHT}}}}}'"
+}
+cmd_scenario29_llmd_canary_down() {
+  local n
+  for n in llmd-v1 llmd-v2; do
+    LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" cmd_maas_unregister_model
+    ssh_bastion "${KCFG_INIT} oc delete llminferenceservice '$n' -n '$S29_NS' --ignore-not-found --wait=true"
+  done
+}
+
+# --- demo model swap (Gateway allows one EPP model: 24/29 need llmd-test down) ---
+LLMD_MANIFEST="${LLMD_MANIFEST:-../manifests/llmd-test-llminferenceservice.json}"
+cmd_llmd_test_down() {
+  ssh_bastion "${KCFG_INIT} oc delete llminferenceservice ${LLMD_NAME:-llmd-test} -n ${LLMD_NAMESPACE:-llmd-test} --ignore-not-found --wait=true"
+}
+cmd_llmd_test_up() {
+  ssh_bastion "mkdir -p ~/ocp-install"
+  scp_to_bastion "$LLMD_MANIFEST" "~/ocp-install/llmd-model.json"
+  run_bench --eval 'require_single_epp "${LLMD_NAMESPACE:-llmd-test}"
+oc apply -f "$HOME/ocp-install/llmd-model.json"; sleep 5
+wait_isvc "${LLMD_NAMESPACE:-llmd-test}" "${LLMD_NAME:-llmd-test}"
+oc get llminferenceservice -n "${LLMD_NAMESPACE:-llmd-test}"'
+}
+
+# --- Scenarios 21-29: llm-d GA features (docs/scenarios/2x-*.md) ---
+cmd_scenario21() { run_bench scenario21-flow-control.sh; }
+cmd_scenario22() { run_bench scenario22-epp-scorers.sh; }
+cmd_scenario23() { run_bench scenario23-lifecycle.sh; }
+cmd_scenario24_up() {
+  LLMD_NAMESPACE=llmd-s24 run_bench --eval 'require_single_epp llmd-s24'
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm LLMD_MODEL_URI=hf://Qwen/Qwen2.5-VL-3B-Instruct LLMD_MODEL_NAME=     LLMD_REPLICAS=2 LLMD_MEMORY=8Gi LLMD_EXTRA_VLLM_ARGS="--limit-mm-per-prompt.image=1" cmd_llmd_deploy_model
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-1000000000}" cmd_maas_register_model
+}
+cmd_scenario24_run() { LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-s24}" LLMD_NAME="${LLMD_NAME:-llmd-vlm}" run_bench scenario24-multimodal.sh; }
+cmd_scenario24_down() {
+  LLMD_NAMESPACE=llmd-s24 LLMD_NAME=llmd-vlm cmd_maas_unregister_model
+  ssh_bastion "${KCFG_INIT} oc delete llminferenceservice llmd-vlm -n llmd-s24 --ignore-not-found --wait=true"
+}
+cmd_scenario25() { run_bench scenario25-tracing.sh; }
+cmd_scenario26() { run_bench scenario26-tls.sh; }
+cmd_scenario27() { run_bench scenario27-scorer-weights.sh; }
+cmd_scenario28() { run_bench scenario28-tokenizer.sh; }
+cmd_scenario29_shift() { LLMD_NAMESPACE="$S29_NS" run_bench scenario29-canary-shift.sh; }
+cmd_maas_checks() { run_bench maas-checks.sh; }
 
 # --- Scenario 11: llm-d data parallelism ---
 cmd_scenario11_llmd_dp_start() {
@@ -81,7 +202,7 @@ cmd_scenario12_llmd_failure_trigger() {
     TRAFFIC_DURATION='${TRAFFIC_DURATION:-180}' bash -s" < ./remote/scenario12-llmd-failure-trigger.sh
 }
 cmd_scenario12_llmd_failure_stop() {
-  ssh_bastion "export KUBECONFIG=~/ocp-install/auth/kubeconfig; \
+  ssh_bastion "${KCFG_INIT} \
     oc delete llminferenceservice '${LLMD_NAME:-llmd-failure-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario12}' --ignore-not-found"
 }
 
@@ -94,7 +215,7 @@ cmd_scenario13_llmd_tracing_demo() {
     TRACING_NAMESPACE='${TRACING_NAMESPACE:-openshift-tempo}' bash -s" < ./remote/scenario13-llmd-tracing-demo.sh
 }
 cmd_scenario13_llmd_tracing_stop() {
-  ssh_bastion "export KUBECONFIG=~/ocp-install/auth/kubeconfig; \
+  ssh_bastion "${KCFG_INIT} \
     oc delete llminferenceservice '${LLMD_NAME:-llmd-tracing-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario13}' --ignore-not-found"
 }
 
@@ -108,22 +229,45 @@ cmd_scenario14_llmd_latency_diagnose() {
     CONCURRENCY='${CONCURRENCY:-6}' DURATION='${DURATION:-60}' bash -s" < ./remote/scenario14-llmd-latency-diagnose.sh
 }
 cmd_scenario14_llmd_latency_stop() {
-  ssh_bastion "export KUBECONFIG=~/ocp-install/auth/kubeconfig; \
+  ssh_bastion "${KCFG_INIT} \
     oc delete llminferenceservice '${LLMD_NAME:-llmd-latency-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario14}' --ignore-not-found"
 }
 
 cmd_status() {
-  ssh_bastion "export KUBECONFIG=~/ocp-install/auth/kubeconfig; \
+  ssh_bastion "${KCFG_INIT} \
     echo '=== llm-d LLMInferenceServices ==='; oc get llminferenceservice -A; \
     echo '=== GPU nodes ==='; oc get nodes -l nvidia.com/gpu.present=true -o jsonpath='{range .items[*]}{.metadata.name}{\"\t\"}{.metadata.labels.node\\.kubernetes\\.io/instance-type}{\"\n\"}{end}'; \
     echo '=== MaaS ==='; oc get gateway -n openshift-ingress 2>&1; \
-    echo '=== Tracing ==='; oc get tempostack -A 2>&1"
+    echo '=== Tracing ==='; oc get tempostack -A 2>&1 || echo '(Tempo not installed: ./harness.sh tracing)'"
 }
 
 case "$cmd" in
+  llmd-prereq)                        cmd_llmd_prereq ;;
   maas)                               cmd_maas ;;
+  maas-register-model)                cmd_maas_register_model ;;
+  maas-api-key)                       cmd_maas_api_key ;;
+  maas-unregister-model)              cmd_maas_unregister_model ;;
+  scenario29-llmd-canary-up)          cmd_scenario29_llmd_canary_up ;;
+  scenario29-llmd-canary-weights)     cmd_scenario29_llmd_canary_weights ;;
+  scenario29-llmd-canary-down)        cmd_scenario29_llmd_canary_down ;;
+  scenario29-llmd-canary-shift)       cmd_scenario29_shift ;;
+  llmd-test-down)                     cmd_llmd_test_down ;;
+  llmd-test-up)                       cmd_llmd_test_up ;;
+  scenario21-llmd-flow-control)       cmd_scenario21 ;;
+  scenario22-llmd-epp-scorers)        cmd_scenario22 ;;
+  scenario23-llmd-lifecycle)          cmd_scenario23 ;;
+  scenario24-llmd-vlm-up)             cmd_scenario24_up ;;
+  scenario24-llmd-vlm-run)            cmd_scenario24_run ;;
+  scenario24-llmd-vlm-down)           cmd_scenario24_down ;;
+  scenario25-llmd-tracing)            cmd_scenario25 ;;
+  scenario26-llmd-tls)                cmd_scenario26 ;;
+  scenario27-llmd-scorer-weights)     cmd_scenario27 ;;
+  scenario28-llmd-tokenizer)          cmd_scenario28 ;;
+  maas-checks)                        cmd_maas_checks ;;
   llmd-deploy-model)                  cmd_llmd_deploy_model ;;
   llmd-monitoring)                    cmd_llmd_monitoring ;;
+  llmd-loadgen)                       cmd_llmd_loadgen ;;
+  llmd-promql)                        cmd_llmd_promql ;;
   tracing)                            cmd_tracing ;;
   scenario11-llmd-dp-start)           cmd_scenario11_llmd_dp_start ;;
   scenario11-llmd-dp-scale)           cmd_scenario11_llmd_dp_scale ;;

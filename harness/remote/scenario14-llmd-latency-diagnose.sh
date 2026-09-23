@@ -7,7 +7,10 @@
 # (kserve_vllm: prefix; see monitoring-llmd-rhoai/lessonlearn.md). Runs ON
 # the bastion. Requires the LLMInferenceService already deployed and Ready.
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
+# python3 may be a non-functional Store alias on Windows (local mode) -> fall back to python.
+PY=python3; python3 -c 'pass' 2>/dev/null || PY=python
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:?set LLMD_NAMESPACE}"
 LLMD_NAME="${LLMD_NAME:-llmd-demo}"
@@ -54,7 +57,7 @@ TOKEN=$(oc create token thanos-reader -n openshift-monitoring --duration=15m)
 #   client cert (system:admin), which has no bearer token to print -- hit this live 2026-09-08.
 q() {
   curl -sk -H "Authorization: Bearer $TOKEN" --data-urlencode "query=$1" "https://$ROUTE/api/v1/query" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin)['data']['result']; print(d[0]['value'][1] if d else 'no data')"
+    | "$PY" -c "import json,sys; d=json.load(sys.stdin)['data']['result']; print(d[0]['value'][1] if d else 'no data')"
 }
 
 NS="$LLMD_NAMESPACE"

@@ -1,0 +1,129 @@
+{
+  "apiVersion": "serving.kserve.io/v1alpha2",
+  "kind": "LLMInferenceService",
+  "metadata": {
+    "labels": {
+      "opendatahub.io/dashboard": "true"
+    },
+    "name": "llmd-test",
+    "namespace": "llmd-test"
+  },
+  "spec": {
+    "baseRefs": [
+      {
+        "name": "v3-5-1-kserve-config-llm-tokenizer"
+      }
+    ],
+    "model": {
+      "name": "Qwen2.5-1.5B-Instruct",
+      "uri": "hf://Qwen/Qwen2.5-1.5B-Instruct"
+    },
+    "replicas": 2,
+    "router": {
+      "gateway": {
+        "refs": [
+          {
+            "name": "maas-default-gateway",
+            "namespace": "openshift-ingress"
+          }
+        ]
+      },
+      "route": {},
+      "scheduler": {
+        "config": {
+          "inline": {
+            "apiVersion": "llm-d.ai/v1alpha1",
+            "kind": "EndpointPickerConfig",
+            "plugins": [
+              {
+                "type": "single-profile-handler"
+              },
+              {
+                "type": "queue-scorer"
+              },
+              {
+                "type": "kv-cache-utilization-scorer"
+              },
+              {
+                "type": "prefix-cache-scorer"
+              },
+              {
+                "type": "no-hit-lru-scorer"
+              },
+              {
+                "type": "max-score-picker"
+              },
+              {
+                "parameters": {
+                  "scheme": "https"
+                },
+                "type": "metrics-data-source"
+              }
+            ],
+            "schedulingProfiles": [
+              {
+                "name": "default",
+                "plugins": [
+                  {
+                    "pluginRef": "queue-scorer",
+                    "weight": 2
+                  },
+                  {
+                    "pluginRef": "kv-cache-utilization-scorer",
+                    "weight": 2
+                  },
+                  {
+                    "pluginRef": "prefix-cache-scorer",
+                    "weight": 3
+                  },
+                  {
+                    "pluginRef": "no-hit-lru-scorer",
+                    "weight": 2
+                  },
+                  {
+                    "pluginRef": "max-score-picker"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "template": {
+      "containers": [
+        {
+          "env": [
+            {
+              "name": "VLLM_ADDITIONAL_ARGS",
+              "value": "--max-model-len=8192 --enforce-eager --gpu-memory-utilization=0.85 --max-num-seqs=4"
+            }
+          ],
+          "name": "main",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "8Gi",
+              "nvidia.com/gpu": "1"
+            },
+            "requests": {
+              "cpu": "2",
+              "memory": "8Gi",
+              "nvidia.com/gpu": "1"
+            }
+          }
+        }
+      ],
+      "nodeSelector": {
+        "node.kubernetes.io/instance-type": "g4dn.xlarge"
+      },
+      "tolerations": [
+        {
+          "effect": "NoSchedule",
+          "key": "nvidia.com/gpu",
+          "operator": "Exists"
+        }
+      ]
+    }
+  }
+}

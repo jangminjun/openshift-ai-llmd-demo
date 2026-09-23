@@ -8,7 +8,8 @@
 # metric. Runs ON the bastion. Requires `harness.sh tracing` to have run
 # first (this only sends traffic; it does not deploy the model).
 set -euo pipefail
-export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig"
+# Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
+[ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
 
 LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario13}"
 LLMD_NAME="${LLMD_NAME:-llmd-tracing-demo}"

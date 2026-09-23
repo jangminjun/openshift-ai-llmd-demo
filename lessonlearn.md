@@ -2,6 +2,69 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-23 — RHOAI 3.5.1(sandbox1314)에서 하네스 재검증
+
+- **bastion 의존 제거.** bastion SSH 키가 AWS 등록 키와 불일치하여 접속 불가. `remote/*.sh`는 `oc`만
+  필요하므로 `HARNESS_EXEC=local|bastion|auto`를 도입하여 로컬 `oc login` 세션으로 실행한다.
+- **기본 클러스터에 관측 스택 누락.** UWM 미활성, Grafana 미설치 상태였다(AGENT.md 기재와 불일치).
+  `./harness.sh llmd-prereq`로 점검·준비한다.
+- **GPU 사양 불일치.** 기본값 g5.2xlarge/16Gi는 g4dn.xlarge(할당 가능 메모리 약 14Gi)에서 스케줄 불가.
+  GPU 타입은 자동 탐지, 모델·메모리 기본값은 `config.env`에서 관리한다.
+- **EPP는 별도 설치 대상이 아니다.** `spec.router.scheduler`가 있어야 컨트롤러가 EPP와 `InferencePool`을
+  생성한다. 없으면 `HTTPRoute`가 워크로드 `Service`로 직결된다. `llmd-deploy-model`은 이제 기본으로 EPP를 활성화한다(`LLMD_SCHEDULER`).
+- **업데이트 직후 Ready는 이전 세대 값이다.** scheduler 추가 직후 Ready=True가 즉시 반환되었다.
+  `metadata.generation == status.observedGeneration`을 함께 확인한다.
+- **MaaS 경로의 버전 차이.** 3.5는 DSC `aigateway.modelsAsAService`, Authorino listener TLS off,
+  `maas-default-gateway` 필수. `./harness.sh maas`가 버전을 판별하여 스크립트를 선택한다.
+  MaaS 게이트웨이 호출은 `MaaSSubscription`이 없으면 403(`no matching subscription`)이다.
+- **같은 Gateway의 다중 InferencePool에서 ext_proc 오배정(OCP 4.22 Gateway, istio-pilot).** EPP가 활성화된
+  `LLMInferenceService` 두 개(`llmd-test`, `llmd-vlm`)를 `maas-default-gateway`에 붙이면, Envoy의 모든
+  InferencePool route가 **마지막에 생성된 EPP**(`llmd-vlm-epp-service`)로 ext_proc을 보낸다. 결과적으로
+  `llmd-test` 요청이 VLM EPP에서 `503 failed to find endpoint candidates`로 실패했다. 두 번째 풀을 삭제하자
+  즉시 복구되었다. 확인 방법:
+  `oc exec -n openshift-ingress <gateway-pod> -- pilot-agent request GET config_dump`에서 route별
+  `typed_per_filter_config`의 ext_proc 대상 클러스터(`outbound|9002||<name>-epp-service...`)를 확인한다.
+  운영 지침: EPP 활성 모델은 Gateway당 1개로 제한하거나, 모델별 Gateway를 분리한다.
+- **MaaS 인증 주체.** `oc` 토큰의 TokenReview 그룹에는 OpenShift `Group`이 포함되지 않는다
+  (`system:authenticated*`만 포함). `MaaSSubscription.owner.users`/`MaaSAuthPolicy.subjects.users`에 사용자를
+  직접 지정해야 한다. ServiceAccount(`system:serviceaccount:…`)는 `Group` 멤버가 될 수 없다.
+  MaaS 구독 결과는 Authorino에서 60초 캐시되므로 변경 후 60초 뒤에 검증한다.
+- **EPP 인라인 설정 변경의 함정 두 가지.** (1) `spec.router.scheduler.config`를 제거해도 EPP
+  `--config-text`는 마지막 인라인 값으로 남는다. (2) merge 패치로 인라인 설정을 바꾸면 새 설정에 없는 키
+  (`featureGates`, `flowControl`)가 잔존하여, 존재하지 않는 plugin 참조로 EPP가 CrashLoop에 빠졌다.
+  인라인 설정은 `oc patch --type=json`의 `replace`로 전체 교체한다.
+- **Flow Control 우선순위와 saturation detector.** `utilization-detector`는 폴링 지연으로 vLLM 내부 대기열이
+  임계값을 크게 초과(15 vs 2)하여 우선순위가 무력화되었다. `concurrency-detector`(open-loop 계수)로 해결
+  (대화형 TTFT 1.7 s vs 24.3 s). `saturationDetector`는 `flowControl` 아래에 둔다.
+- **외부 토크나이저는 두 단계 설정이 필요.** `tokenizer: {}`(빈 객체)는 저장 시 제거되어 무효이며
+  `baseRefs: [{name: v3-5-1-kserve-config-llm-tokenizer}]`로 서비스를 띄운다. preset은 EPP를 연결하지 않으므로
+  `token-producer`를 추가하고 `modelName`을 render 서버 모델 ID(`/mnt/models/base`)로 둔다. 서빙 모델명을
+  쓰면 render 404 → prefix Scorer 0점으로 캐시 인지 라우팅이 무력화된다.
+- **MaaS non-streaming 응답 본문 유실.** `stream: false` 응답의 30~40%가 HTTP 200, 본문 0바이트였다(EPP 유무
+  무관). Gateway 로그에 Kuadrant wasm-shim `proxy_on_grpc_receive invalid context_id`가 동반된다. 스트리밍은
+  정상이며 토큰 한도는 두 방식 모두 적용된다. MaaS 클라이언트는 `stream: true`를 사용한다.
+- **MaaS 인증 200ms 타임아웃.** Kuadrant wasm 설정(`envoyfilter kuadrant-maas-default-gateway`)의 인증
+  서비스는 `timeout: 200ms`, `failureMode: deny`이다. Authorino의 TokenReview/maas-api 호출이 지연되면 500이
+  발생한다(0.1~0.4%). API 키(`./harness.sh maas-api-key`)로 빈도를 낮춘다. Kuadrant CR에는 조정 필드가 없다.
+- **LLM TLS 설정 경로.** DSC `spec.components.kserve.enableLLMInferenceServiceTLS`가 공식 경로이며,
+  `inferenceservice-config`는 operator 소유라 직접 수정하지 않는다.
+- **Tempo Jaeger UI Route.** 수동 `oc expose` Route는 Tempo operator가 제거한다. TempoStack
+  `jaegerQuery.ingress.type: route`를 사용한다(OpenShift OAuth 보호, API는 port-forward로 접근).
+- **Windows(Git Bash) 로컬 실행의 경로 변환.** Git Bash는 네이티브 프로그램의 argv 중 `/`로 시작하는 값을
+  Windows 경로로 바꾼다(`/mnt/models/base` → `C:/Program Files/Git/mnt/models/base`). 하네스가 EPP
+  `token-producer.modelName`에 변환된 값을 넣어 render 404 → prefix Scorer 0점이 되었다. `MSYS_NO_PATHCONV=1`을
+  전역으로 켜면 반대로 `oc --from-file=$HOME/...` 같은 실제 파일 경로가 깨진다. 컨테이너 내부 경로는
+  argv 대신 stdin으로 전달한다(`remote/scenario28-tokenizer.sh`).
+- **롤링 재기동에는 여유 GPU 1장이 필요.** 워크로드 `Deployment`는 maxSurge 1 / maxUnavailable 0이므로 GPU가
+  모두 사용 중이면 신규 pod가 `Pending`으로 남아 롤아웃이 멈춘다. vLLM 인자·트레이싱·TLS 변경 전
+  `require_free_gpu`로 점검한다.
+- **g4dn.xlarge 메모리 한도.** 할당 가능 메모리 약 14Gi에서 데몬셋 요청을 제외하면 모델 컨테이너는
+  8Gi 수준이 상한이다(12Gi는 `Insufficient memory`).
+- **미해결: `openshift-ai-inference` Gateway Envoy segfault.** EPP 활성 모델의 `HTTPRoute`를 이
+  Gateway로 전환한 직후(06:29) Envoy가 segfault로 재시작되고 HPA가 10개로 확장했으며, 이후 요청은 500을 반환했다
+  (EPP는 대상 선택 로그를 남겼으나 vLLM에 요청 미도달). `maas-default-gateway`로 원복 후 추가 재시작은 없다.
+  EPP 경유 E2E 추론 검증은 MaaS 모델 등록 후 `maas-default-gateway`에서 수행할 예정이다.
+
 ## 2026-09-09 (2) — Jaeger Route를 `harness/remote/tracing.sh`를 안 거치고 수동으로 만들어서
 직접 겪은 시행착오 (하네스 자체는 문제 없었음)
 
