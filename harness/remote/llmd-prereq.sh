@@ -55,11 +55,13 @@ else
   bad "cluster-monitoring-config exists without enableUserWorkload: true -- add it manually:
          oc edit cm cluster-monitoring-config -n openshift-monitoring"
 fi
+# Capture first: `oc ... | grep -q` under pipefail fails when grep exits early (SIGPIPE to oc).
 for _ in $(seq 1 30); do
-  oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus 2>/dev/null | grep -q Running && break
+  UWM_PODS=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus 2>/dev/null || true)
+  grep -q Running <<< "$UWM_PODS" && break
   sleep 10
 done
-oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus 2>/dev/null | grep -q Running \
+grep -q Running <<< "$UWM_PODS" \
   && ok "UWM Prometheus Running" || bad "UWM Prometheus not Running (oc get pods -n openshift-user-workload-monitoring)"
 
 echo "== 5. Grafana ($MONITORING_NAMESPACE) =="

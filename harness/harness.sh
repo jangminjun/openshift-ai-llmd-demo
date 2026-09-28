@@ -34,6 +34,7 @@
 #   scenario12-llmd-failure-{start,trigger,stop}  failure & recovery: kill a workload pod under traffic
 #   scenario13-llmd-tracing-{demo,stop}             request tracing: OTLP-enabled model, per-request trace in Tempo
 #   scenario14-llmd-latency-{start,diagnose,stop}     latency diagnosis: queue/prefill/decode breakdown
+#   (11-14 load the workload Service directly -> deployed without EPP, coexist with llmd-test)
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
 # defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
@@ -148,6 +149,7 @@ cmd_llmd_test_up() {
   ssh_bastion "mkdir -p ~/ocp-install"
   scp_to_bastion "$LLMD_MANIFEST" "~/ocp-install/llmd-model.json"
   run_bench --eval 'require_single_epp "${LLMD_NAMESPACE:-llmd-test}"
+oc get namespace "${LLMD_NAMESPACE:-llmd-test}" &>/dev/null || oc create namespace "${LLMD_NAMESPACE:-llmd-test}"
 oc apply -f "$HOME/ocp-install/llmd-model.json"; sleep 5
 wait_isvc "${LLMD_NAMESPACE:-llmd-test}" "${LLMD_NAME:-llmd-test}"
 oc get llminferenceservice -n "${LLMD_NAMESPACE:-llmd-test}"'
@@ -177,6 +179,7 @@ cmd_maas_checks() { run_bench maas-checks.sh; }
 # --- Scenario 11: llm-d data parallelism ---
 cmd_scenario11_llmd_dp_start() {
   LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario11}" LLMD_NAME="${LLMD_NAME:-llmd-dp-demo}" LLMD_REPLICAS=1 \
+    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
     cmd_llmd_deploy_model
 }
 cmd_scenario11_llmd_dp_scale() {
@@ -195,6 +198,7 @@ cmd_scenario11_llmd_dp_stop() {
 # --- Scenario 12: llm-d failure & recovery ---
 cmd_scenario12_llmd_failure_start() {
   LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario12}" LLMD_NAME="${LLMD_NAME:-llmd-failure-demo}" LLMD_REPLICAS=1 \
+    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
     cmd_llmd_deploy_model
 }
 cmd_scenario12_llmd_failure_trigger() {
@@ -209,6 +213,7 @@ cmd_scenario12_llmd_failure_stop() {
 # --- Scenario 13: llm-d request tracing ---
 cmd_scenario13_llmd_tracing_demo() {
   LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario13}" LLMD_NAME="${LLMD_NAME:-llmd-tracing-demo}" LLMD_REPLICAS=1 \
+    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
     LLMD_EXTRA_VLLM_ARGS="--otlp-traces-endpoint=grpc://tempo-llmd-tracing-distributor.${TRACING_NAMESPACE:-openshift-tempo}.svc:4317" \
     cmd_llmd_deploy_model
   ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:-llmd-scenario13}' LLMD_NAME='${LLMD_NAME:-llmd-tracing-demo}' \
@@ -222,6 +227,7 @@ cmd_scenario13_llmd_tracing_stop() {
 # --- Scenario 14: llm-d latency diagnosis ---
 cmd_scenario14_llmd_latency_start() {
   LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario14}" LLMD_NAME="${LLMD_NAME:-llmd-latency-demo}" LLMD_REPLICAS=1 \
+    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
     cmd_llmd_deploy_model
 }
 cmd_scenario14_llmd_latency_diagnose() {

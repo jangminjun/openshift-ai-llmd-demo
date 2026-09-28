@@ -115,7 +115,7 @@
         }
       ],
       "nodeSelector": {
-        "node.kubernetes.io/instance-type": "g4dn.xlarge"
+        "node.kubernetes.io/instance-type": "g5.24xlarge"
       },
       "tolerations": [
         {
