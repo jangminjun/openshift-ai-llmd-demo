@@ -35,8 +35,7 @@
 #   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
 #   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
 #   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
-#   scenario14-llmd-latency-{start,diagnose,stop}     latency diagnosis: queue/prefill/decode breakdown
-#   (14 loads the workload Service directly -> deployed without EPP, coexist with llmd-test)
+#   scenario14-llmd-latency             latency diagnosis: queue / prefill / decode bottleneck workloads
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
 # defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
@@ -197,20 +196,8 @@ cmd_scenario12() { run_bench scenario12-failure.sh; }
 # --- Scenario 13: request tracing, cache miss vs hit (llmd-test) ---
 cmd_scenario13() { run_bench scenario13-trace-cache.sh; }
 
-# --- Scenario 14: llm-d latency diagnosis ---
-cmd_scenario14_llmd_latency_start() {
-  LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario14}" LLMD_NAME="${LLMD_NAME:-llmd-latency-demo}" LLMD_REPLICAS=1 \
-    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
-    cmd_llmd_deploy_model
-}
-cmd_scenario14_llmd_latency_diagnose() {
-  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:-llmd-scenario14}' LLMD_NAME='${LLMD_NAME:-llmd-latency-demo}' \
-    CONCURRENCY='${CONCURRENCY:-6}' DURATION='${DURATION:-60}' bash -s" < ./remote/scenario14-llmd-latency-diagnose.sh
-}
-cmd_scenario14_llmd_latency_stop() {
-  ssh_bastion "${KCFG_INIT} \
-    oc delete llminferenceservice '${LLMD_NAME:-llmd-latency-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario14}' --ignore-not-found"
-}
+# --- Scenario 14: latency diagnosis, one workload per bottleneck (llmd-test) ---
+cmd_scenario14() { run_bench scenario14-latency.sh; }
 
 cmd_status() {
   ssh_bastion "${KCFG_INIT} \
@@ -252,9 +239,7 @@ case "$cmd" in
   scenario11-llmd-dp-affinity)        cmd_scenario11_affinity ;;
   scenario12-llmd-failure)            cmd_scenario12 ;;
   scenario13-llmd-tracing)            cmd_scenario13 ;;
-  scenario14-llmd-latency-start)      cmd_scenario14_llmd_latency_start ;;
-  scenario14-llmd-latency-diagnose)   cmd_scenario14_llmd_latency_diagnose ;;
-  scenario14-llmd-latency-stop)       cmd_scenario14_llmd_latency_stop ;;
+  scenario14-llmd-latency)            cmd_scenario14 ;;
   status)                             cmd_status ;;
   *)
     err "Unknown subcommand '$cmd'. See header comment in ./harness.sh for the list."

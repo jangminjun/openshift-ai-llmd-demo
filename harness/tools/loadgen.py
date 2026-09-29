@@ -27,6 +27,7 @@ Env:
   PAUSE_AFTER_TURN multi-turn: run turns [0, N) of every conversation, print "PHASE_PAUSE", sleep
                PAUSE_SECONDS (default 180), then run the remaining turns; lets the caller change the
                cluster (e.g. restart the EPP) between phases. Pause time is excluded from wall_s/rps.
+  IGNORE_EOS   1 = vLLM ignore_eos: always generate MAX_TOKENS (decode-bound workloads)
   HEADERS      JSON object of extra request headers
   LABEL        free-text label copied into the summary
   TIMEOUT      per-request timeout seconds (default 300)
@@ -45,6 +46,7 @@ DOCS = int(E("DOCS", "100")); DOC_OFFSET = int(E("DOC_OFFSET", "0"))
 IMAGES = [u for u in E("IMAGE_URLS", "").split(",") if u]
 HDRS = json.loads(E("HEADERS", "{}")); LABEL = E("LABEL", ""); TIMEOUT = float(E("TIMEOUT", "300"))
 SESSIONS = int(E("SESSIONS", "64")); TURNS = int(E("TURNS", "3")); SESSION_HEADER = E("SESSION_HEADER", "x-session-token")
+IGNORE_EOS = E("IGNORE_EOS", "") == "1"
 PAUSE_AFTER = int(E("PAUSE_AFTER_TURN", "0")); PAUSE_S = float(E("PAUSE_SECONDS", "180"))
 
 u = urllib.parse.urlparse(URL)
@@ -86,8 +88,11 @@ def doc(d):  # stable PREFIX_TOKENS-long document per id
 
 def one(i, msgs=None, extra=None, turn=None):
     """Send one streamed request; returns (answer text, response headers)."""
-    body = json.dumps({"model": MODEL, "messages": msgs or messages(i), "max_tokens": MAXTOK, "stream": True,
-                       "stream_options": {"include_usage": True}})
+    req = {"model": MODEL, "messages": msgs or messages(i), "max_tokens": MAXTOK, "stream": True,
+           "stream_options": {"include_usage": True}}
+    if IGNORE_EOS:
+        req["ignore_eos"] = True
+    body = json.dumps(req)
     h = {"Content-Type": "application/json", **HDRS, **(extra or {})}
     if TOKEN:
         h["Authorization"] = "Bearer " + TOKEN
