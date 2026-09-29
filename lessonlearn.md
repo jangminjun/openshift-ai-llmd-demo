@@ -13,6 +13,10 @@
   oc patch authorino authorino -n kuadrant-system --type=merge \
     -p '{"spec":{"listener":{"tls":{"enabled":true,"certSecretRef":{"name":"authorino-server-cert"}}}}}'
   ```
+- **콘솔 Observe → Traces는 멀티테넌시 Tempo만 표시한다.** 멀티테넌시 없는 TempoMonolithic은 플러그인의
+  `list-tempo-resources`에서 제외된다. 멀티테넌시(`mode: openshift`) Tempo는 인증된 쓰기만 받으므로 vLLM·EPP 앞에
+  OTel Collector를 두고 SA 토큰(`bearertokenauth`)과 `X-Scope-OrgID`를 붙인다. heredoc(`<<YAML`) 안의 백틱은 명령으로
+  실행되므로 주석에도 쓰지 않는다.
 - **InferencePool `FailClose`가 Envoy에 반영되지 않는다.** `LLMInferenceService.spec.router.scheduler.pool.spec`로
   `failureMode: FailClose`를 지정하면 `InferencePool`은 바뀌지만, `maas-default-gateway` Envoy의 라우트별 `ext_proc`
   설정은 `failure_mode_allow: true`를 유지하였다(OCP 4.22, `istiod-openshift-gateway`, 3분 이상 관찰). EPP 장애 시
@@ -37,7 +41,7 @@
   증설이 필요하면 다른 AZ에 MachineSet을 복제하거나, 한 노드의 GPU 4장 안에서 시나리오를 수행한다.
 - **MinIO 공개 이미지 사용 불가.** `quay.io/minio/minio`, `docker.io/minio/minio` 모두 pull이 거부된다
   (`unauthorized`). `tracing`을 TempoStack(S3) 대신 TempoMonolithic(PV 저장)으로 전환하였다. OTLP 수신은
-  `tempo-llmd-tracing:4317`, Jaeger API는 `svc/tempo-llmd-tracing-jaegerui:16686`이다.
+  `tempo-llmd-tracing:4317`, Jaeger API는 `svc/tempo-llmd-tracing-jaegerui:16686`이었다(이후 멀티테넌시로 변경, 아래 항목).
 
 ## 2026-09-23 — RHOAI 3.5.1(sandbox1314)에서 하네스 재검증
 

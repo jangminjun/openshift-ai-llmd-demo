@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Installs distributed tracing (Tempo) for llm-d request tracing: Red Hat build
-# of OpenTelemetry (RHBO) + Tempo Operator, then a TempoMonolithic with PV
-# storage and the Jaeger UI. No object store: the public MinIO images
-# (quay.io/minio/minio, docker.io/minio/minio) are no longer pullable.
-# Idempotent.
-#   OTLP gRPC ingest: tempo-<TEMPO_NAME>.<TRACING_NAMESPACE>.svc:4317
-#   Jaeger query API: svc/tempo-<TEMPO_NAME>-jaegerui:16686 (port-forward)
+# Installs distributed tracing for llm-d: Red Hat build of OpenTelemetry (RHBO) + Tempo
+# Operator, a multi-tenant TempoMonolithic (PV storage, mode openshift) and an OTel Collector
+# that authenticates to the Tempo gateway, plus the console Observe > Traces UI (COO UIPlugin).
+#   vLLM/EPP --OTLP--> <OTEL_NAME>-collector:4317 --bearer token + X-Scope-OrgID--> Tempo gateway
+# The console plugin lists multi-tenant Tempo instances only, and a multi-tenant Tempo only
+# accepts authenticated writes -> the collector adds the ServiceAccount token.
+# No object store: the public MinIO images are no longer pullable. Idempotent.
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
 [ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
@@ -13,6 +13,8 @@ set -euo pipefail
 TRACING_NAMESPACE="${TRACING_NAMESPACE:-openshift-tempo}"
 TEMPO_NAME="${TEMPO_NAME:-llmd-tracing}"
 TEMPO_STORAGE_SIZE="${TEMPO_STORAGE_SIZE:-10Gi}"
+TEMPO_TENANT="${TEMPO_TENANT:-llmd}"
+OTEL_NAME="${OTEL_NAME:-llmd-otel}"
 
 echo "=== Red Hat build of OpenTelemetry + Tempo Operator ==="
 # Skip when the operator is already installed (e.g. by RHOAI) -- a second
@@ -45,7 +47,7 @@ for _ in $(seq 1 30); do
 done
 oc get crd tempomonolithics.tempo.grafana.com &>/dev/null || { echo "Timed out waiting for Tempo CRDs" >&2; exit 1; }
 
-echo "=== TempoMonolithic $TEMPO_NAME (PV $TEMPO_STORAGE_SIZE) ==="
+echo "=== TempoMonolithic $TEMPO_NAME (PV $TEMPO_STORAGE_SIZE, tenant $TEMPO_TENANT) ==="
 oc get namespace "$TRACING_NAMESPACE" &>/dev/null || oc create namespace "$TRACING_NAMESPACE"
 oc apply -f - <<YAML
 apiVersion: tempo.grafana.com/v1alpha1
@@ -62,13 +64,12 @@ spec:
     limits:
       memory: 2Gi
       cpu: "1"
-  jaegerui:
+  multitenancy:
     enabled: true
-    # Operator-managed Route. A manual `oc expose` route gets pruned by the
-    # Tempo operator (observed 2026-09-23: route vanished within ~1h).
-    route:
-      enabled: true
-      termination: edge
+    mode: openshift
+    authentication:
+    - tenantName: ${TEMPO_TENANT}
+      tenantId: ${TEMPO_TENANT}
 YAML
 
 echo "Waiting for TempoMonolithic Ready (up to 5m)..."
@@ -79,8 +80,98 @@ for _ in $(seq 1 30); do
 done
 oc get tempomonolithic "$TEMPO_NAME" -n "$TRACING_NAMESPACE"
 
-JAEGER_HOST=$(oc get route "tempo-${TEMPO_NAME}-jaegerui" -n "$TRACING_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+echo "=== OTel Collector $OTEL_NAME -> Tempo gateway (tenant $TEMPO_TENANT) ==="
+oc apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${TEMPO_NAME}-traces-write
+rules:
+- apiGroups: [tempo.grafana.com]
+  resources: [${TEMPO_TENANT}]
+  resourceNames: [traces]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${TEMPO_NAME}-traces-write
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ${TEMPO_NAME}-traces-write}
+subjects:
+- {kind: ServiceAccount, name: ${OTEL_NAME}-collector, namespace: ${TRACING_NAMESPACE}}
+---
+# read access for the harness (tempo_services / tempo_trace); console users need the same 'get'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${TEMPO_NAME}-traces-read
+rules:
+- apiGroups: [tempo.grafana.com]
+  resources: [${TEMPO_TENANT}]
+  resourceNames: [traces]
+  verbs: [get]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${TEMPO_NAME}-reader
+  namespace: ${TRACING_NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${TEMPO_NAME}-traces-read
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ${TEMPO_NAME}-traces-read}
+subjects:
+- {kind: ServiceAccount, name: ${TEMPO_NAME}-reader, namespace: ${TRACING_NAMESPACE}}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: ${OTEL_NAME}
+  namespace: ${TRACING_NAMESPACE}
+spec:
+  mode: deployment
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          grpc: {endpoint: 0.0.0.0:4317}
+          http: {endpoint: 0.0.0.0:4318}
+    processors:
+      memory_limiter: {check_interval: 1s, limit_percentage: 75, spike_limit_percentage: 15}
+      batch: {}
+    exporters:
+      otlp/tempo:
+        endpoint: tempo-${TEMPO_NAME}-gateway.${TRACING_NAMESPACE}.svc.cluster.local:4317
+        auth: {authenticator: bearertokenauth}
+        headers: {X-Scope-OrgID: ${TEMPO_TENANT}}
+        tls: {ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt}
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/tempo]}
+YAML
+oc rollout status "deploy/${OTEL_NAME}-collector" -n "$TRACING_NAMESPACE" --timeout=300s
+
+echo "=== OpenShift console Observe > Traces (COO UIPlugin) ==="
+if oc get crd uiplugins.observability.openshift.io &>/dev/null; then
+  oc apply -f - <<'YAML'
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: distributed-tracing
+spec:
+  type: DistributedTracing
+YAML
+else
+  echo "Cluster Observability Operator not installed -- skipping the console trace UI."
+fi
+
 echo ""
-echo "Tracing stack ready. OTLP gRPC ingest (for vLLM --otlp-traces-endpoint):"
-echo "  tempo-${TEMPO_NAME}.${TRACING_NAMESPACE}.svc:4317"
-echo "Jaeger UI: https://${JAEGER_HOST:-<route pending>}"
+echo "Tracing stack ready. OTLP gRPC ingest (spec.tracing exporterEndpoint):"
+echo "  http://${OTEL_NAME}-collector.${TRACING_NAMESPACE}.svc.cluster.local:4317"
+echo "Traces UI: OpenShift console > Observe > Traces (${TRACING_NAMESPACE}/${TEMPO_NAME}, tenant ${TEMPO_TENANT})"

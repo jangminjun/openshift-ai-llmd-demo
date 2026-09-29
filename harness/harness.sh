@@ -18,7 +18,9 @@
 #   llmd-loadgen                        in-cluster load Job via tools/loadgen.py (LLMD_NAMESPACE/LLMD_NAME or URL/MODEL; see loadgen.py)
 #   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
 #   llmd-monitoring                         PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
-#   tracing                                   RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic (llm-d request tracing)
+#   tracing                                   RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic + console Traces UI
+#   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
+#                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
 #   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
 #   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
 #   scenario22-llmd-epp-scorers         default EPP vs random-picker, multi-document workload
@@ -32,9 +34,9 @@
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
 #   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
-#   scenario13-llmd-tracing-{demo,stop}             request tracing: OTLP-enabled model, per-request trace in Tempo
+#   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
 #   scenario14-llmd-latency-{start,diagnose,stop}     latency diagnosis: queue/prefill/decode breakdown
-#   (13-14 load the workload Service directly -> deployed without EPP, coexist with llmd-test)
+#   (14 loads the workload Service directly -> deployed without EPP, coexist with llmd-test)
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
 # defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
@@ -114,6 +116,15 @@ cmd_llmd_monitoring() {
 }
 
 cmd_tracing() { ssh_bastion 'bash -s' < ./remote/tracing.sh; }
+cmd_llmd_tracing() {
+  run_bench --eval 'NS="${LLMD_NAMESPACE:-llmd-test}"; N="${LLMD_NAME:-llmd-test}"
+if [ "'"${TRACING:-on}"'" = off ]; then tracing_disable "$NS" "$N"; exit 0; fi
+tracing_enable "$NS" "$N" "${LLMD_TRACING_SAMPLER:-1.0}"
+s=$(loadgen tracing-probe LLMD_NAMESPACE="$NS" LLMD_NAME="$N" PROMPT_MODE=short CONCURRENCY=1 REQUESTS="${LLMD_TRACING_PROBE:-3}" MAX_TOKENS=16 LABEL=tracing-probe)
+brief "$s"; sleep 15
+echo "  Tempo services: $(tempo_services)"
+echo "  UI: OpenShift console > Observe > Traces (openshift-tempo/llmd-tracing)"'
+}
 
 # --- Scenario 29: controlled deployment (route group + weight) ---
 # Needs to be the only EPP-enabled model on the Gateway (multi-InferencePool
@@ -183,19 +194,8 @@ cmd_scenario11_affinity() { run_bench scenario11-dp-affinity.sh; }
 # --- Scenario 12: failure & recovery (llmd-test via MaaS + EPP) ---
 cmd_scenario12() { run_bench scenario12-failure.sh; }
 
-# --- Scenario 13: llm-d request tracing ---
-cmd_scenario13_llmd_tracing_demo() {
-  LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario13}" LLMD_NAME="${LLMD_NAME:-llmd-tracing-demo}" LLMD_REPLICAS=1 \
-    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
-    LLMD_EXTRA_VLLM_ARGS="--otlp-traces-endpoint=grpc://tempo-llmd-tracing.${TRACING_NAMESPACE:-openshift-tempo}.svc:4317" \
-    cmd_llmd_deploy_model
-  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:-llmd-scenario13}' LLMD_NAME='${LLMD_NAME:-llmd-tracing-demo}' \
-    TRACING_NAMESPACE='${TRACING_NAMESPACE:-openshift-tempo}' bash -s" < ./remote/scenario13-llmd-tracing-demo.sh
-}
-cmd_scenario13_llmd_tracing_stop() {
-  ssh_bastion "${KCFG_INIT} \
-    oc delete llminferenceservice '${LLMD_NAME:-llmd-tracing-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario13}' --ignore-not-found"
-}
+# --- Scenario 13: request tracing, cache miss vs hit (llmd-test) ---
+cmd_scenario13() { run_bench scenario13-trace-cache.sh; }
 
 # --- Scenario 14: llm-d latency diagnosis ---
 cmd_scenario14_llmd_latency_start() {
@@ -248,10 +248,10 @@ case "$cmd" in
   llmd-loadgen)                       cmd_llmd_loadgen ;;
   llmd-promql)                        cmd_llmd_promql ;;
   tracing)                            cmd_tracing ;;
+  llmd-tracing)                       cmd_llmd_tracing ;;
   scenario11-llmd-dp-affinity)        cmd_scenario11_affinity ;;
   scenario12-llmd-failure)            cmd_scenario12 ;;
-  scenario13-llmd-tracing-demo)       cmd_scenario13_llmd_tracing_demo ;;
-  scenario13-llmd-tracing-stop)       cmd_scenario13_llmd_tracing_stop ;;
+  scenario13-llmd-tracing)            cmd_scenario13 ;;
   scenario14-llmd-latency-start)      cmd_scenario14_llmd_latency_start ;;
   scenario14-llmd-latency-diagnose)   cmd_scenario14_llmd_latency_diagnose ;;
   scenario14-llmd-latency-stop)       cmd_scenario14_llmd_latency_stop ;;
