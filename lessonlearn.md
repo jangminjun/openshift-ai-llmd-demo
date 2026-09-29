@@ -17,6 +17,8 @@
   `list-tempo-resources`에서 제외된다. 멀티테넌시(`mode: openshift`) Tempo는 인증된 쓰기만 받으므로 vLLM·EPP 앞에
   OTel Collector를 두고 SA 토큰(`bearertokenauth`)과 `X-Scope-OrgID`를 붙인다. heredoc(`<<YAML`) 안의 백틱은 명령으로
   실행되므로 주석에도 쓰지 않는다.
+- **g5.24xlarge의 GPU 4장은 NVLink 없이 PCIe로 연결된다.** `nvidia-smi topo -m`이 모두 `PHB`이고 NVLink는 미지원이다.
+  TP·EP는 층마다 GPU 간 통신이 필요하므로 이 환경에서는 효과가 제한되어 시나리오 15·16을 설계만 하고 보류하였다.
 - **InferencePool `FailClose`가 Envoy에 반영되지 않는다.** `LLMInferenceService.spec.router.scheduler.pool.spec`로
   `failureMode: FailClose`를 지정하면 `InferencePool`은 바뀌지만, `maas-default-gateway` Envoy의 라우트별 `ext_proc`
   설정은 `failure_mode_allow: true`를 유지하였다(OCP 4.22, `istiod-openshift-gateway`, 3분 이상 관찰). EPP 장애 시

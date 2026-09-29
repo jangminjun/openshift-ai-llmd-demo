@@ -70,7 +70,7 @@ flowchart LR
 ## 시나리오
 
 - **11~14 (데이터 병렬화, 장애 복구, 요청 추적, 지연 진단)**: RHOAI 3.5.1, `llmd-test`(Qwen2.5-1.5B-Instruct), g5.24xlarge(A10G), MaaS Gateway 경유.
-- **15~16 (병렬화 계획)**: 미구현.
+- **15~16 (병렬화)**: 설계만 완료. A10G × 4가 PCIe로만 연결되어(NVLink 없음) 측정을 보류하였다.
 - **21~29 (llm-d GA 기능)**: RHOAI 3.5.1, Qwen2.5-1.5B-Instruct(24번은 Qwen2.5-VL-3B-Instruct), g4dn.xlarge(T4) × 2,
   MaaS Gateway 경유로 측정. 개요와 공통 전제: [llmd-ga-overview.md](docs/scenarios/llmd-ga-overview.md).
 
@@ -80,8 +80,8 @@ flowchart LR
 | 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | vLLM pod(replica 1·2)와 EPP pod 삭제 시 실패 요청·복구 시간 | replica 1은 약 2분 전면 중단(503), replica 2는 vLLM·EPP 장애 모두 무중단(EPP는 `FailOpen`) | `scenario12-llmd-failure` |
 | 13 | [요청 추적](docs/scenarios/13-request-tracing.md) | 캐시 miss(1턴)와 hit(2턴)의 EPP·vLLM span | 적중 시 prefill 0.173→0.032초(−82%), EPP pod 선택 1ms 미만 | `scenario13-llmd-tracing` |
 | 14 | [지연 진단](docs/scenarios/14-latency-diagnosis.md) | queue·prefill·decode 병목을 유도한 부하 3종의 판정 | 3종 모두 의도한 병목 판정(평균 기준, 두 단계). p95는 히스토그램 경계로 부정확 | `scenario14-llmd-latency` |
-| 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티 GPU 텐서 분할 서빙 | 계획(멀티 GPU 노드 필요) | 미구현 |
-| 16 | [Expert 병렬화(EP)](docs/scenarios/16-expert-parallelism.md) | MoE expert 분산 | 계획(MoE 모델·멀티 GPU 필요) | 미구현 |
+| 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 대형 모델 분할 서빙, TP vs 데이터 병렬화 | 설계 완료, 보류: GPU 간 NVLink 없음(PCIe `PHB`) | 미구현 |
+| 16 | [Expert 병렬화(EP)](docs/scenarios/16-expert-parallelism.md) | MoE expert 분산 | 설계 완료, 보류: all-to-all 통신에 NVLink 필요 | 미구현 |
 | 21 | [우선순위 Flow Control](docs/scenarios/21-flow-control-priority.md) | 포화 시 `InferenceObjective` 우선순위 적용 | 대화형 TTFT 1.7 s vs 대조군 24.3 s. `concurrency-detector` 필요(`utilization-detector`는 우선순위 역전) | `scenario21-llmd-flow-control` |
 | 22 | [EPP Scorer 4종](docs/scenarios/22-epp-scorers.md) | KV 캐시 인지 라우팅 | prefix 적중률 83.2% vs 58.4%, TTFT p50 10배 단축, 처리량 2.1배 | `scenario22-llmd-epp-scorers` |
 | 23 | [추론 인지 라이프사이클](docs/scenarios/23-inference-aware-lifecycle.md) | 롤링 업데이트 중 요청 유실 | pod 교체로 인한 유실 0건 | `scenario23-llmd-lifecycle` |
