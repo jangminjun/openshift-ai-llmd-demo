@@ -13,6 +13,10 @@
   oc patch authorino authorino -n kuadrant-system --type=merge \
     -p '{"spec":{"listener":{"tls":{"enabled":true,"certSecretRef":{"name":"authorino-server-cert"}}}}}'
   ```
+- **InferencePool `FailClose`가 Envoy에 반영되지 않는다.** `LLMInferenceService.spec.router.scheduler.pool.spec`로
+  `failureMode: FailClose`를 지정하면 `InferencePool`은 바뀌지만, `maas-default-gateway` Envoy의 라우트별 `ext_proc`
+  설정은 `failure_mode_allow: true`를 유지하였다(OCP 4.22, `istiod-openshift-gateway`, 3분 이상 관찰). EPP 장애 시
+  항상 FailOpen으로 동작한다(시나리오 12 C에서 32초간 무중단).
 - **부하 생성기 문서 본문이 단일 단어 반복이었다.** `loadgen.py`가 단어마다 `random.Random(seed)`를 새로 만들어
   `shared-prefix`·`multi-prefix`·`multi-turn` 문서가 한 단어의 반복이 되었다(수정: 문서당 RNG 1개). 문서 번호가
   선두에 있어 prefix는 문서별로 고유하므로 캐시·분배 결과(시나리오 11, 22, 27)는 유효하나, 내용의 현실성은 낮았다.

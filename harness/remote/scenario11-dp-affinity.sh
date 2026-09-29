@@ -22,16 +22,6 @@ require_token_limit "$NS" "$N"
 ORIG=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.spec.replicas}')
 SCHEME=$(tls_scheme)
 
-set_replicas() {
-  [ "$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.spec.replicas}')" = "$1" ] && return
-  oc patch llminferenceservice "$N" -n "$NS" --type=merge -p "{\"spec\":{\"replicas\":$1}}" >/dev/null
-  sleep 5; wait_isvc "$NS" "$N"
-  for _ in $(seq 1 60); do   # terminating pods still report metrics / hold GPUs
-    [ "$(oc get pods -n "$NS" -l app.kubernetes.io/component=llminferenceservice-workload --no-headers 2>/dev/null | wc -l | tr -d ' ')" = "$1" ] && break
-    sleep 5
-  done
-  echo "  replicas=$1"
-}
 # epp_with <extra-plugin-json> <profile-entry-json> <first|last>: default config + one plugin
 epp_with() {
   "$PY" -c '
@@ -75,33 +65,33 @@ run_restart() {
 
 for arm in ${S11_ARMS:-A B C D E}; do case $arm in
   A) say "A) replica 1, default EPP (before)"
-     set_replicas 1; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run r1-epp ;;
+     set_replicas "$NS" "$N" 1; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run r1-epp ;;
   B) say "B) replica 2, workload Service (cache-unaware)"
-     set_replicas 2; run r2-service URL="$SVC_URL" ;;
+     set_replicas "$NS" "$N" 2; run r2-service URL="$SVC_URL" ;;
   C) say "C) replica 2, default EPP"
-     set_replicas 2; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run r2-epp ;;
+     set_replicas "$NS" "$N" 2; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run r2-epp ;;
   D) say "D) replica 2, EPP + session-affinity-scorer (weight ${S11_AFFINITY_WEIGHT:-3})"
-     set_replicas 2
+     set_replicas "$NS" "$N" 2
      # Build JSON args outside "$(...)": nested \" there lets brace expansion split the value.
      entry='{"pluginRef":"session-affinity-scorer","weight":'"${S11_AFFINITY_WEIGHT:-3}"'}'
      cfg=$(epp_with '{"type":"session-affinity-scorer"}' "$entry" last)
      epp_set "$NS" "$N" "$cfg"
      run r2-affinity-scorer ;;
   E) say "E) replica 2, EPP + session-affinity-filter"
-     set_replicas 2
+     set_replicas "$NS" "$N" 2
      cfg=$(epp_with '{"type":"session-affinity-filter"}' '{"pluginRef":"session-affinity-filter"}' first)
      epp_set "$NS" "$N" "$cfg"
      run r2-affinity-filter ;;
   F0|F1) restart=false; [ "$arm" = F1 ] && restart=true
      say "$arm) replica 2, default EPP, EPP restart between turns: $restart"
-     set_replicas 2; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run_restart "r2-epp-restart-$restart" "$restart" ;;
+     set_replicas "$NS" "$N" 2; epp_set "$NS" "$N" "$(epp_default "$SCHEME")"; run_restart "r2-epp-restart-$restart" "$restart" ;;
   F2) say "F2) replica 2, EPP + session-affinity-scorer, EPP restart between turns"
-     set_replicas 2
+     set_replicas "$NS" "$N" 2
      entry='{"pluginRef":"session-affinity-scorer","weight":'"${S11_AFFINITY_WEIGHT:-3}"'}'
      cfg=$(epp_with '{"type":"session-affinity-scorer"}' "$entry" last)
      epp_set "$NS" "$N" "$cfg"; run_restart r2-affinity-restart true ;;
 esac; done
 
 say "restore"
-set_replicas "$ORIG"
+set_replicas "$NS" "$N" "$ORIG"
 epp_restore_default "$NS" "$N"

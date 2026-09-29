@@ -142,6 +142,18 @@ wait_isvc() {  # <ns> <name>: controller caught up + Ready + workloads rolled ou
   done
   for d in $(oc get deploy -n "$ns" -o name | grep "/${n}-"); do oc rollout status "$d" -n "$ns" --timeout=900s >/dev/null; done
 }
+# set_replicas <ns> <name> <n>: scale an LLMInferenceService and wait until exactly n workload pods run
+set_replicas() {
+  local ns=$1 n=$2 r=$3
+  [ "$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.replicas}')" = "$r" ] && return
+  oc patch llminferenceservice "$n" -n "$ns" --type=merge -p "{\"spec\":{\"replicas\":$r}}" >/dev/null
+  sleep 5; wait_isvc "$ns" "$n"
+  for _ in $(seq 1 60); do   # terminating pods still report metrics / hold GPUs
+    [ "$(oc get pods -n "$ns" -l app.kubernetes.io/component=llminferenceservice-workload --no-headers 2>/dev/null | wc -l | tr -d ' ')" = "$r" ] && break
+    sleep 5
+  done
+  echo "  replicas=$r"
+}
 epp_default() {  # [scheme] -> RHOAI 3.5.1 default EndpointPickerConfig (JSON)
   local scheme=${1:-https}
   echo '{"apiVersion":"llm-d.ai/v1alpha1","kind":"EndpointPickerConfig","plugins":[{"type":"single-profile-handler"},{"type":"queue-scorer"},{"type":"kv-cache-utilization-scorer"},{"type":"prefix-cache-scorer"},{"type":"no-hit-lru-scorer"},{"type":"max-score-picker"},{"type":"metrics-data-source","parameters":{"scheme":"'"$scheme"'"}}],"schedulingProfiles":[{"name":"default","plugins":[{"pluginRef":"queue-scorer","weight":2},{"pluginRef":"kv-cache-utilization-scorer","weight":2},{"pluginRef":"prefix-cache-scorer","weight":3},{"pluginRef":"no-hit-lru-scorer","weight":2},{"pluginRef":"max-score-picker"}]}]}'

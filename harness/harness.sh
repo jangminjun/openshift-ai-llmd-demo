@@ -31,10 +31,10 @@
 #   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment (needs llmd-test-down first)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
-#   scenario12-llmd-failure-{start,trigger,stop}  failure & recovery: kill a workload pod under traffic
+#   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
 #   scenario13-llmd-tracing-{demo,stop}             request tracing: OTLP-enabled model, per-request trace in Tempo
 #   scenario14-llmd-latency-{start,diagnose,stop}     latency diagnosis: queue/prefill/decode breakdown
-#   (12-14 load the workload Service directly -> deployed without EPP, coexist with llmd-test)
+#   (13-14 load the workload Service directly -> deployed without EPP, coexist with llmd-test)
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
 # defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
@@ -180,20 +180,8 @@ cmd_maas_checks() { run_bench maas-checks.sh; }
 # --- Scenario 11: data parallelism x routing (llmd-test, replica 1 vs 2) ---
 cmd_scenario11_affinity() { run_bench scenario11-dp-affinity.sh; }
 
-# --- Scenario 12: llm-d failure & recovery ---
-cmd_scenario12_llmd_failure_start() {
-  LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario12}" LLMD_NAME="${LLMD_NAME:-llmd-failure-demo}" LLMD_REPLICAS=1 \
-    LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" \
-    cmd_llmd_deploy_model
-}
-cmd_scenario12_llmd_failure_trigger() {
-  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:-llmd-scenario12}' LLMD_NAME='${LLMD_NAME:-llmd-failure-demo}' \
-    TRAFFIC_DURATION='${TRAFFIC_DURATION:-180}' bash -s" < ./remote/scenario12-llmd-failure-trigger.sh
-}
-cmd_scenario12_llmd_failure_stop() {
-  ssh_bastion "${KCFG_INIT} \
-    oc delete llminferenceservice '${LLMD_NAME:-llmd-failure-demo}' -n '${LLMD_NAMESPACE:-llmd-scenario12}' --ignore-not-found"
-}
+# --- Scenario 12: failure & recovery (llmd-test via MaaS + EPP) ---
+cmd_scenario12() { run_bench scenario12-failure.sh; }
 
 # --- Scenario 13: llm-d request tracing ---
 cmd_scenario13_llmd_tracing_demo() {
@@ -261,9 +249,7 @@ case "$cmd" in
   llmd-promql)                        cmd_llmd_promql ;;
   tracing)                            cmd_tracing ;;
   scenario11-llmd-dp-affinity)        cmd_scenario11_affinity ;;
-  scenario12-llmd-failure-start)      cmd_scenario12_llmd_failure_start ;;
-  scenario12-llmd-failure-trigger)    cmd_scenario12_llmd_failure_trigger ;;
-  scenario12-llmd-failure-stop)       cmd_scenario12_llmd_failure_stop ;;
+  scenario12-llmd-failure)            cmd_scenario12 ;;
   scenario13-llmd-tracing-demo)       cmd_scenario13_llmd_tracing_demo ;;
   scenario13-llmd-tracing-stop)       cmd_scenario13_llmd_tracing_stop ;;
   scenario14-llmd-latency-start)      cmd_scenario14_llmd_latency_start ;;

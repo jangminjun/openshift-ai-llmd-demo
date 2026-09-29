@@ -69,8 +69,8 @@ flowchart LR
 
 ## 시나리오
 
-- **11 (데이터 병렬화)**: RHOAI 3.5.1, `llmd-test`(Qwen2.5-1.5B-Instruct), g5.24xlarge(A10G), MaaS Gateway 경유.
-- **12~16 (분산 운영)**: 최초 측정은 RHOAI 3.4.4, Qwen2.5-7B-Instruct, g5.2xlarge(A10G). RHOAI 3.5.1에서는
+- **11·12 (데이터 병렬화, 장애 복구)**: RHOAI 3.5.1, `llmd-test`(Qwen2.5-1.5B-Instruct), g5.24xlarge(A10G), MaaS Gateway 경유.
+- **13~16 (분산 운영)**: 최초 측정은 RHOAI 3.4.4, Qwen2.5-7B-Instruct, g5.2xlarge(A10G). RHOAI 3.5.1에서는
   EPP 없이 배포하여 워크로드 Service를 직접 호출하며, `llmd-test`와 같은 Gateway에 공존한다.
 - **21~29 (llm-d GA 기능)**: RHOAI 3.5.1, Qwen2.5-1.5B-Instruct(24번은 Qwen2.5-VL-3B-Instruct), g4dn.xlarge(T4) × 2,
   MaaS Gateway 경유로 측정. 개요와 공통 전제: [llmd-ga-overview.md](docs/scenarios/llmd-ga-overview.md).
@@ -78,7 +78,7 @@ flowchart LR
 | # | 기능 | 검증 내용 | 실측 결과 | 하네스 명령 |
 |---|---|---|---|---|
 | 11 | [데이터 병렬화와 캐시 인지 라우팅](docs/scenarios/11-data-parallelism.md) | replica 1 vs 2, 분배 방식(`Service`/EPP/session affinity)별 처리량·캐시 적중률 | replica 2에서 EPP 분배는 처리량 ×1.99·적중률 66.7%(이론 상한), `Service` 분배는 ×1.55·41.2%. session affinity는 평상시 이득 없으나 EPP 재시작 시 적중률 94.2% 유지(기본 72.3%) | `scenario11-llmd-dp-affinity` |
-| 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | 워크로드 pod 장애 시 실패율과 복구 시간 | 복구 384 s(모델 재다운로드 지배). 연결 실패는 서버 메트릭에 집계되지 않음 | `scenario12-llmd-failure-{start,trigger,stop}` |
+| 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | vLLM pod(replica 1·2)와 EPP pod 삭제 시 실패 요청·복구 시간 | replica 1은 약 2분 전면 중단(503), replica 2는 vLLM·EPP 장애 모두 무중단(EPP는 `FailOpen`) | `scenario12-llmd-failure` |
 | 13 | [요청 추적](docs/scenarios/13-request-tracing.md) | vLLM 인자 방식 OTLP 트레이싱 | 부분 실측(startup span). 요청 단위 trace는 시나리오 25(`spec.tracing`)에서 완료 | `scenario13-llmd-tracing-{demo,stop}` |
 | 14 | [지연 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 병목 구분 | decode가 단독 병목(9.6 s / 4.9 s), 재검증 시 재현 | `scenario14-llmd-latency-{start,diagnose,stop}` |
 | 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티 GPU 텐서 분할 서빙 | 계획(멀티 GPU 노드 필요) | 미구현 |

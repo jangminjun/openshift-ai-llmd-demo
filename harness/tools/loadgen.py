@@ -169,7 +169,7 @@ ok = [r for r in results if r["code"] == 200]
 codes = {}
 for r in results:
     codes[str(r["code"])] = codes.get(str(r["code"]), 0) + 1
-summary = {"label": LABEL, "mode": MODE, "concurrency": CONC, "n": len(results), "ok": len(ok), "codes": codes,
+summary = {"label": LABEL, "start_epoch": round(start, 3), "mode": MODE, "concurrency": CONC, "n": len(results), "ok": len(ok), "codes": codes,
            "wall_s": round(wall, 1), "rps": round(len(ok) / wall, 2) if wall else 0,
            "out_tok_s": round(sum(r["toks"] for r in ok) / wall, 1) if wall else 0,
            "ttft_p50": pct([r["ttft"] for r in ok], .5), "ttft_p95": pct([r["ttft"] for r in ok], .95),
@@ -180,5 +180,5 @@ if MODE == "multi-turn":  # first turn = cold document, later turns = history al
     summary["ttft_p50_later"] = pct([r["ttft"] for r in ok if r["turn"]], .5)
     summary["session_token_resp"] = sum(r["stoken"] for r in ok)
 if E("TIMELINE"):
-    summary["timeline"] = [[round(r["t"] - start, 1), r["code"]] for r in sorted(results, key=lambda r: r["t"])]
+    summary["timeline"] = [[round(r["t"] - start, 1), r["code"], r["ttft"] and round(r["ttft"], 3)] for r in sorted(results, key=lambda r: r["t"])]
 print("SUMMARY " + json.dumps(summary))
