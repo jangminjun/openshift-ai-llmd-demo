@@ -1,206 +1,177 @@
 #!/usr/bin/env bash
-# Installs distributed tracing (Tempo) for llm-d request tracing: Cluster
-# Observability Operator (COO, ships TempoStack support) + Red Hat build of
-# OpenTelemetry (RHBO) + Tempo Operator, then a TempoStack backed by the
-# same in-cluster MinIO openshift-logging.sh already deployed (adds a
-# second bucket to it rather than standing up a separate object store).
-# Runs ON the bastion. Idempotent.
+# Installs distributed tracing for llm-d: Red Hat build of OpenTelemetry (RHBO) + Tempo
+# Operator, a multi-tenant TempoMonolithic (PV storage, mode openshift) and an OTel Collector
+# that authenticates to the Tempo gateway, plus the console Observe > Traces UI (COO UIPlugin).
+#   vLLM/EPP --OTLP--> <OTEL_NAME>-collector:4317 --bearer token + X-Scope-OrgID--> Tempo gateway
+# The console plugin lists multi-tenant Tempo instances only, and a multi-tenant Tempo only
+# accepts authenticated writes -> the collector adds the ServiceAccount token.
+# No object store: the public MinIO images are no longer pullable. Idempotent.
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
 [ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
 
-MINIO_NAMESPACE="${MINIO_NAMESPACE:-minio}"
-MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
-MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin123}"
 TRACING_NAMESPACE="${TRACING_NAMESPACE:-openshift-tempo}"
-TEMPO_BUCKET="${TEMPO_BUCKET:-tempo-traces}"
+TEMPO_NAME="${TEMPO_NAME:-llmd-tracing}"
+TEMPO_STORAGE_SIZE="${TEMPO_STORAGE_SIZE:-10Gi}"
+TEMPO_TENANT="${TEMPO_TENANT:-llmd}"
+OTEL_NAME="${OTEL_NAME:-llmd-otel}"
 
-# Reuse the MinIO openshift-logging.sh deploys when present; otherwise stand
-# up a minimal single-replica MinIO here so this harness stays self-contained.
-if ! oc get deployment minio -n "$MINIO_NAMESPACE" &>/dev/null; then
-  echo "=== MinIO not found in $MINIO_NAMESPACE -- deploying a minimal instance ==="
-  oc get namespace "$MINIO_NAMESPACE" &>/dev/null || oc create namespace "$MINIO_NAMESPACE"
-  oc apply -n "$MINIO_NAMESPACE" -f - <<YAML
-apiVersion: v1
-kind: PersistentVolumeClaim
+echo "=== Red Hat build of OpenTelemetry + Tempo Operator ==="
+# Skip when the operator is already installed (e.g. by RHOAI) -- a second
+# Subscription for the same package breaks OLM resolution.
+for pkg in tempo-product opentelemetry-product; do
+  if oc get subscriptions.operators.coreos.com -A -o jsonpath='{.items[*].spec.name}' | tr ' ' '\n' | grep -qx "$pkg"; then
+    echo "$pkg already subscribed."
+    continue
+  fi
+  oc apply -f - <<YAML
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
 metadata:
-  name: minio-data
+  name: ${pkg}
+  namespace: openshift-operators
 spec:
-  accessModes: [ReadWriteOnce]
-  resources: {requests: {storage: 20Gi}}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: minio
-spec:
-  replicas: 1
-  strategy: {type: Recreate}
-  selector: {matchLabels: {app: minio}}
-  template:
-    metadata: {labels: {app: minio}}
-    spec:
-      containers:
-      - name: minio
-        image: quay.io/minio/minio:latest
-        args: ["server", "/data", "--console-address", ":9001"]
-        env:
-        - {name: MINIO_ROOT_USER, value: "${MINIO_ACCESS_KEY}"}
-        - {name: MINIO_ROOT_PASSWORD, value: "${MINIO_SECRET_KEY}"}
-        ports: [{containerPort: 9000}, {containerPort: 9001}]
-        volumeMounts: [{name: data, mountPath: /data}]
-      volumes: [{name: data, persistentVolumeClaim: {claimName: minio-data}}]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: minio
-spec:
-  selector: {app: minio}
-  ports: [{name: api, port: 9000, targetPort: 9000}]
+  channel: stable
+  installPlanApproval: Automatic
+  name: ${pkg}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
 YAML
-  oc rollout status deployment/minio -n "$MINIO_NAMESPACE" --timeout=300s
-fi
-
-echo "=== Ensuring a $TEMPO_BUCKET bucket exists in MinIO ==="
-# MINIO_DEFAULT_BUCKETS only creates buckets on a truly empty data
-# directory -- on a PVC that already has data (e.g. loki-logs from
-# openshift-logging.sh already ran), restarting MinIO with an updated
-# MINIO_DEFAULT_BUCKETS does NOT retroactively create the new bucket, even
-# though the env var is set correctly and the pod restarts cleanly. Hit
-# this live 2026-09-08: Tempo's ingester/compactor/querier/query-frontend
-# all crash-looped with "ListObjects on tempo-traces: The specified bucket
-# does not exist" despite the env var being right. Fix: create the bucket
-# for real via `mc`, don't just set the env var and hope.
-current_buckets=$(oc get deployment minio -n "$MINIO_NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MINIO_DEFAULT_BUCKETS")].value}' 2>/dev/null || echo "")
-case ",${current_buckets}," in
-  *",${TEMPO_BUCKET},"*) : ;;
-  *)
-    new_buckets="${current_buckets:+${current_buckets},}${TEMPO_BUCKET}"
-    oc set env deployment/minio -n "$MINIO_NAMESPACE" "MINIO_DEFAULT_BUCKETS=${new_buckets}"
-    oc rollout status deployment/minio -n "$MINIO_NAMESPACE" --timeout=120s
-    ;;
-esac
-
-oc delete pod mc-bucket-ensure -n "$MINIO_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-oc run mc-bucket-ensure --image=quay.io/minio/mc:latest -n "$MINIO_NAMESPACE" --restart=Never \
-  --env="HOME=/tmp" --command -- sh -c \
-  "mc alias set myminio http://minio.${MINIO_NAMESPACE}.svc:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} && mc mb -p myminio/${TEMPO_BUCKET}" \
-  >/dev/null
-for _ in $(seq 1 12); do
-  phase=$(oc get pod mc-bucket-ensure -n "$MINIO_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-  [ "$phase" = "Succeeded" ] || [ "$phase" = "Failed" ] && break
-  sleep 5
 done
-oc logs mc-bucket-ensure -n "$MINIO_NAMESPACE" 2>&1 || true
-oc delete pod mc-bucket-ensure -n "$MINIO_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-echo "Bucket $TEMPO_BUCKET confirmed."
-
-echo "=== Cluster Observability Operator + Red Hat build of OpenTelemetry + Tempo Operator ==="
-oc apply -f - <<'YAML'
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: openshift-operators
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: cluster-observability-operator
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: cluster-observability-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: tempo-product
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: tempo-product
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: opentelemetry-product
-  namespace: openshift-operators
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: opentelemetry-product
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-YAML
 
 echo "Waiting for Tempo + OpenTelemetry CRDs (up to 5m)..."
 for _ in $(seq 1 30); do
-  oc get crd tempostacks.tempo.grafana.com &>/dev/null && \
+  oc get crd tempomonolithics.tempo.grafana.com &>/dev/null && \
   oc get crd opentelemetrycollectors.opentelemetry.io &>/dev/null && break
   sleep 10
 done
-oc get crd tempostacks.tempo.grafana.com &>/dev/null || { echo "Timed out waiting for Tempo CRDs" >&2; exit 1; }
+oc get crd tempomonolithics.tempo.grafana.com &>/dev/null || { echo "Timed out waiting for Tempo CRDs" >&2; exit 1; }
 
-echo "=== TempoStack (backed by MinIO/$TEMPO_BUCKET) ==="
+echo "=== TempoMonolithic $TEMPO_NAME (PV $TEMPO_STORAGE_SIZE, tenant $TEMPO_TENANT) ==="
 oc get namespace "$TRACING_NAMESPACE" &>/dev/null || oc create namespace "$TRACING_NAMESPACE"
-
-oc create secret generic tempo-minio -n "$TRACING_NAMESPACE" \
-  --from-literal=bucket="$TEMPO_BUCKET" \
-  --from-literal=endpoint="http://minio.${MINIO_NAMESPACE}.svc:9000" \
-  --from-literal=access_key_id="$MINIO_ACCESS_KEY" \
-  --from-literal=access_key_secret="$MINIO_SECRET_KEY" \
-  --dry-run=client -o yaml | oc apply -f -
-
 oc apply -f - <<YAML
 apiVersion: tempo.grafana.com/v1alpha1
-kind: TempoStack
+kind: TempoMonolithic
 metadata:
-  name: llmd-tracing
+  name: ${TEMPO_NAME}
   namespace: ${TRACING_NAMESPACE}
 spec:
   storage:
-    secret:
-      name: tempo-minio
-      type: s3
-  storageSize: 10Gi
+    traces:
+      backend: pv
+      size: ${TEMPO_STORAGE_SIZE}
   resources:
-    total:
-      limits:
-        memory: 2Gi
-        cpu: "1"
-  template:
-    queryFrontend:
-      jaegerQuery:
-        enabled: true
-        # Operator-managed Route. A manual `oc expose` route gets pruned by the
-        # Tempo operator (observed 2026-09-23: route vanished within ~1h).
-        ingress:
-          type: route
-          route:
-            termination: edge
+    limits:
+      memory: 2Gi
+      cpu: "1"
+  multitenancy:
+    enabled: true
+    mode: openshift
+    authentication:
+    - tenantName: ${TEMPO_TENANT}
+      tenantId: ${TEMPO_TENANT}
 YAML
 
-echo "Waiting for TempoStack pods..."
+echo "Waiting for TempoMonolithic Ready (up to 5m)..."
 for _ in $(seq 1 30); do
-  oc get pods -n "$TRACING_NAMESPACE" -l app.kubernetes.io/component=query-frontend 2>/dev/null | grep -q Running && break
+  [ "$(oc get tempomonolithic "$TEMPO_NAME" -n "$TRACING_NAMESPACE" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ] && break
   sleep 10
 done
+oc get tempomonolithic "$TEMPO_NAME" -n "$TRACING_NAMESPACE"
 
-echo "=== Jaeger UI route (operator-managed) ==="
-for _ in $(seq 1 30); do
-  oc get route tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" &>/dev/null && break
-  sleep 5
-done
-JAEGER_HOST=$(oc get route tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" -o jsonpath='{.spec.host}')
+echo "=== OTel Collector $OTEL_NAME -> Tempo gateway (tenant $TEMPO_TENANT) ==="
+oc apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${TEMPO_NAME}-traces-write
+rules:
+- apiGroups: [tempo.grafana.com]
+  resources: [${TEMPO_TENANT}]
+  resourceNames: [traces]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${TEMPO_NAME}-traces-write
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ${TEMPO_NAME}-traces-write}
+subjects:
+- {kind: ServiceAccount, name: ${OTEL_NAME}-collector, namespace: ${TRACING_NAMESPACE}}
+---
+# read access for the harness (tempo_services / tempo_trace); console users need the same 'get'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${TEMPO_NAME}-traces-read
+rules:
+- apiGroups: [tempo.grafana.com]
+  resources: [${TEMPO_TENANT}]
+  resourceNames: [traces]
+  verbs: [get]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${TEMPO_NAME}-reader
+  namespace: ${TRACING_NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${TEMPO_NAME}-traces-read
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ${TEMPO_NAME}-traces-read}
+subjects:
+- {kind: ServiceAccount, name: ${TEMPO_NAME}-reader, namespace: ${TRACING_NAMESPACE}}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: ${OTEL_NAME}
+  namespace: ${TRACING_NAMESPACE}
+spec:
+  mode: deployment
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          grpc: {endpoint: 0.0.0.0:4317}
+          http: {endpoint: 0.0.0.0:4318}
+    processors:
+      memory_limiter: {check_interval: 1s, limit_percentage: 75, spike_limit_percentage: 15}
+      batch: {}
+    exporters:
+      otlp/tempo:
+        endpoint: tempo-${TEMPO_NAME}-gateway.${TRACING_NAMESPACE}.svc.cluster.local:4317
+        auth: {authenticator: bearertokenauth}
+        headers: {X-Scope-OrgID: ${TEMPO_TENANT}}
+        tls: {ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt}
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/tempo]}
+YAML
+oc rollout status "deploy/${OTEL_NAME}-collector" -n "$TRACING_NAMESPACE" --timeout=300s
+
+echo "=== OpenShift console Observe > Traces (COO UIPlugin) ==="
+if oc get crd uiplugins.observability.openshift.io &>/dev/null; then
+  oc apply -f - <<'YAML'
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: distributed-tracing
+spec:
+  type: DistributedTracing
+YAML
+else
+  echo "Cluster Observability Operator not installed -- skipping the console trace UI."
+fi
 
 echo ""
-echo "Tracing stack ready. OTLP gRPC ingest (for vLLM --otlp-traces-endpoint):"
-echo "  tempo-llmd-tracing-distributor.${TRACING_NAMESPACE}.svc:4317"
-echo "Jaeger UI: https://${JAEGER_HOST}"
+echo "Tracing stack ready. OTLP gRPC ingest (spec.tracing exporterEndpoint):"
+echo "  http://${OTEL_NAME}-collector.${TRACING_NAMESPACE}.svc.cluster.local:4317"
+echo "Traces UI: OpenShift console > Observe > Traces (${TRACING_NAMESPACE}/${TEMPO_NAME}, tenant ${TEMPO_TENANT})"

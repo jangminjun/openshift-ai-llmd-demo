@@ -40,13 +40,13 @@ Deployment)는 EPP 모델 2개를 동시에 요구하므로 마지막에 별도�
    ```sh
    oc get llminferenceserviceconfig -n redhat-ods-applications
    ```
-3. **GPU 예산.** g4dn.xlarge(T4 16GB × 1) 기준, 시나리오 21~28은 `llmd-test`(replica 2)로 GPU 2장,
+3. **GPU 예산.** 실측은 g4dn.xlarge(T4 16GB × 1)에서 수행했고, 현재 구성은 g5.24xlarge(A10G 24GB × 4)이다. 시나리오 21~28은 `llmd-test`(replica 2)로 GPU 2장,
    시나리오 29는 v1/v2로 GPU 2장을 사용한다(동시 운영 불가). 스케일 아웃 시 MachineAutoscaler 범위를 함께 조정한다.
    ```sh
    oc scale machineset <gpu-machineset> -n openshift-machine-api --replicas=N
    oc patch machineautoscaler <name> -n openshift-machine-api --type=merge -p '{"spec":{"minReplicas":N,"maxReplicas":N}}'
    ```
-4. **모델.** T4 기준 텍스트 모델은 `Qwen/Qwen2.5-1.5B-Instruct`, 멀티모달은
+4. **모델.** 실측 결과와의 비교를 위해 텍스트 모델은 `Qwen/Qwen2.5-1.5B-Instruct`, 멀티모달은
    `Qwen/Qwen2.5-VL-3B-Instruct`를 기본으로 한다. 포화 유도가 필요한 시나리오는
    `--max-num-seqs`를 낮춰 적은 부하로 포화 상태를 재현한다.
 5. **관측.** `./harness.sh llmd-prereq`로 User Workload Monitoring과 Grafana를 준비한다.
@@ -61,7 +61,7 @@ Deployment)는 EPP 모델 2개를 동시에 요구하므로 마지막에 별도�
 | `llmd-deploy-model` | `LLMInferenceService` 배포(EPP 기본 활성, `LLMD_SCHEDULER=false`로 비활성) |
 | `llmd-loadgen` | 클러스터 내 부하 Job(스트리밍 TTFT/E2E, 클라이언트 측 코드 집계) |
 | `llmd-promql` | Thanos 즉시 조회 |
-| `tracing` | Tempo + Jaeger UI(operator 관리 Route), MinIO 자동 배포 |
+| `tracing` | TempoMonolithic(PV 저장) + Jaeger UI(operator 관리 Route) |
 | `llmd-test-down` / `llmd-test-up` | 데모 모델 내리기·복구(`manifests/llmd-test-llminferenceservice.json`) |
 | `scenario21-…` ~ `scenario29-…` | 시나리오별 측정 자동화(각 문서 "하네스 실행"). 종료 시 EPP 설정 원복 |
 | `maas-checks` | `MAAS_CHECK=nonstream`(빈 본문 발생률), `MAAS_CHECK=token-limit`(한도 적용, 원복) |

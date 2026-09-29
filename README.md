@@ -46,8 +46,8 @@ flowchart LR
     GW -->|HTTPRoute| IP["InferencePool"]
     IP -->|ext_proc| EPP["EPP\nScorer 4종 · Flow Control\n· token-producer"]
     EPP -.->|render| TK["tokenizer\n(vllm launch render)"]
-    EPP -->|선택된 endpoint| V["vLLM pod × N\n(T4 GPU)"]
-    V -.->|OTLP| TEMPO["TempoStack"]
+    EPP -->|선택된 endpoint| V["vLLM pod × N\n(A10G GPU)"]
+    V -.->|OTLP| TEMPO["TempoMonolithic"]
     EPP -.->|OTLP| TEMPO
     V -->|kserve_vllm:*| UWM["UWM Prometheus"]
     EPP -->|llm_d_epp_*| UWM
@@ -64,19 +64,22 @@ flowchart LR
 - **EPP 인라인 설정은 전체 교체한다.** merge 패치는 이전 키를 남겨 CrashLoop를 유발하고, 설정 제거는
   기본값으로 복귀시키지 않는다.
 - **롤링 재기동에는 여유 GPU 1장이 필요하다**(maxSurge 1, maxUnavailable 0).
+- **Authorino listener TLS는 켜야 한다.** odh-model-controller의 `<gateway>-authn-ssl` EnvoyFilter가 TLS로
+  접속하므로, TLS off이면 인증이 필요한 모든 MaaS 요청이 500을 반환한다(`maas.sh`에 반영).
 
 ## 시나리오
 
-- **11~16 (분산 운영)**: RHOAI 3.4.4, Qwen2.5-7B-Instruct, g5.2xlarge(A10G), 워크로드 Service 직접 호출로 측정.
+- **11~14 (데이터 병렬화, 장애 복구, 요청 추적, 지연 진단)**: RHOAI 3.5.1, `llmd-test`(Qwen2.5-1.5B-Instruct), g5.24xlarge(A10G), MaaS Gateway 경유.
+- **15~16 (병렬화 계획)**: 미구현.
 - **21~29 (llm-d GA 기능)**: RHOAI 3.5.1, Qwen2.5-1.5B-Instruct(24번은 Qwen2.5-VL-3B-Instruct), g4dn.xlarge(T4) × 2,
   MaaS Gateway 경유로 측정. 개요와 공통 전제: [llmd-ga-overview.md](docs/scenarios/llmd-ga-overview.md).
 
 | # | 기능 | 검증 내용 | 실측 결과 | 하네스 명령 |
 |---|---|---|---|---|
-| 11 | [데이터 병렬화(DP)](docs/scenarios/11-data-parallelism.md) | replica 1 vs N의 처리량 확장 | 고정 부하에서는 +10%에 그침. 부하를 함께 늘려야 확장 효과가 나타남 | `scenario11-llmd-dp-{start,scale,load,stop}` |
-| 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | 워크로드 pod 장애 시 실패율과 복구 시간 | 복구 384 s(모델 재다운로드 지배). 연결 실패는 서버 메트릭에 집계되지 않음 | `scenario12-llmd-failure-{start,trigger,stop}` |
-| 13 | [요청 추적](docs/scenarios/13-request-tracing.md) | vLLM 인자 방식 OTLP 트레이싱 | 부분 실측(startup span). 요청 단위 trace는 시나리오 25(`spec.tracing`)에서 완료 | `scenario13-llmd-tracing-{demo,stop}` |
-| 14 | [지연 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 병목 구분 | decode가 단독 병목(9.6 s / 4.9 s), 재검증 시 재현 | `scenario14-llmd-latency-{start,diagnose,stop}` |
+| 11 | [데이터 병렬화와 캐시 인지 라우팅](docs/scenarios/11-data-parallelism.md) | replica 1 vs 2, 분배 방식(`Service`/EPP/session affinity)별 처리량·캐시 적중률 | replica 2에서 EPP 분배는 처리량 ×1.99·적중률 66.7%(이론 상한), `Service` 분배는 ×1.55·41.2%. session affinity는 평상시 이득 없으나 EPP 재시작 시 적중률 94.2% 유지(기본 72.3%) | `scenario11-llmd-dp-affinity` |
+| 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | vLLM pod(replica 1·2)와 EPP pod 삭제 시 실패 요청·복구 시간 | replica 1은 약 2분 전면 중단(503), replica 2는 vLLM·EPP 장애 모두 무중단(EPP는 `FailOpen`) | `scenario12-llmd-failure` |
+| 13 | [요청 추적](docs/scenarios/13-request-tracing.md) | 캐시 miss(1턴)와 hit(2턴)의 EPP·vLLM span | 적중 시 prefill 0.173→0.032초(−82%), EPP pod 선택 1ms 미만 | `scenario13-llmd-tracing` |
+| 14 | [지연 진단](docs/scenarios/14-latency-diagnosis.md) | queue·prefill·decode 병목을 유도한 부하 3종의 판정 | 3종 모두 의도한 병목 판정(평균 기준, 두 단계). p95는 히스토그램 경계로 부정확 | `scenario14-llmd-latency` |
 | 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티 GPU 텐서 분할 서빙 | 계획(멀티 GPU 노드 필요) | 미구현 |
 | 16 | [Expert 병렬화(EP)](docs/scenarios/16-expert-parallelism.md) | MoE expert 분산 | 계획(MoE 모델·멀티 GPU 필요) | 미구현 |
 | 21 | [우선순위 Flow Control](docs/scenarios/21-flow-control-priority.md) | 포화 시 `InferenceObjective` 우선순위 적용 | 대화형 TTFT 1.7 s vs 대조군 24.3 s. `concurrency-detector` 필요(`utilization-detector`는 우선순위 역전) | `scenario21-llmd-flow-control` |
@@ -94,8 +97,8 @@ flowchart LR
 ## 사전 조건
 
 - OpenShift 4.22, RHOAI 3.5.1(`DataScienceCluster` Ready, KServe Managed), NVIDIA GPU Operator
-- GPU 노드: 데모 1회당 T4 2장(21~28은 `llmd-test` replica 2, 29는 v1/v2). 롤링 재기동 시나리오(23·25·26)는
-  여유 GPU 1장 추가
+- GPU 노드: 현재 구성은 g5.24xlarge(A10G 24GB × 4). 21~28은 `llmd-test` replica 2, 29는 v1/v2로 GPU 2장을
+  사용하며, 롤링 재기동 시나리오(23·25·26)는 여유 GPU 1장을 추가로 요구한다
 - `oc login`(cluster-admin). bastion은 선택 사항이다(`HARNESS_EXEC=auto`는 로컬 `oc` 세션을 사용)
 - 클러스터 접속 정보는 `AGENT.md`(gitignore)에 둔다: `cp AGENT.md.example AGENT.md`
 
@@ -122,17 +125,23 @@ oc get nodes -l nvidia.com/gpu.present=true
    ```sh
    ./harness.sh llmd-test-up                 # manifests/llmd-test-llminferenceservice.json
    LLMD_NAMESPACE=llmd-test LLMD_NAME=llmd-test MAAS_USERS=<user>,system:serviceaccount:llmd-bench:loadgen \
-     ./harness.sh maas-register-model
+     ./harness.sh maas-register-model          # 토큰 한도 기본 10억/시간(부하 시험용)
    ./harness.sh maas-api-key                  # sk-oai-* 키 → Secret llmd-bench/loadgen-token
    oc get llminferenceservice,inferencepool -n llmd-test
    ```
 4. **관측 구성** — PrometheusRule, Grafana 대시보드, 트레이싱
    ```sh
+   GRAFANA_ADMIN_PASSWORD=<pw> ./harness.sh llmd-prereq      # 선택: Grafana admin 암호 고정
    LLMD_NAMESPACE=llmd-test ./harness.sh llmd-monitoring
-   ./harness.sh tracing
+   ./harness.sh tracing && ./harness.sh llmd-tracing         # Tempo·Collector·콘솔 Traces, llmd-test 추적 켜기
+   ./harness.sh status
    ```
-5. **시나리오 실행** — 21~28은 `llmd-test`로 실행하고, 24·29는 모델을 교체하여 마지막에 실행한다.
+5. **시나리오 실행** — 11~14, 21~28은 `llmd-test`로 실행하고, 24·29는 모델을 교체하여 마지막에 실행한다.
    ```sh
+   ./harness.sh scenario11-llmd-dp-affinity                     # S11_ARMS="A B C D E" 또는 "F0 F1 F2"
+   ./harness.sh scenario12-llmd-failure
+   ./harness.sh scenario13-llmd-tracing
+   ./harness.sh scenario14-llmd-latency
    ./harness.sh scenario22-llmd-epp-scorers                     # 예시. S22_* 로 규모 조정
    ./harness.sh llmd-test-down && ./harness.sh scenario29-llmd-canary-up
    ./harness.sh scenario29-llmd-canary-shift
@@ -147,6 +156,51 @@ oc get nodes -l nvidia.com/gpu.present=true
 임의 부하와 지표 조회는 `./harness.sh llmd-loadgen`(스트리밍 TTFT/E2E, 클라이언트 측 코드 집계)과
 `QUERY='<promql>' ./harness.sh llmd-promql`을 사용한다.
 
+## 트레이싱
+
+`LLMInferenceService.spec.tracing`을 지정하면 컨트롤러가 vLLM과 EPP에 `OTEL_*` 환경변수를 주입한다. 두 컴포넌트는
+span을 OTel Collector로 보내고, Collector가 ServiceAccount 토큰과 tenant 헤더를 붙여 멀티테넌시 Tempo에 저장한다.
+콘솔 Observe → Traces는 멀티테넌시 Tempo만 표시하므로 이 구성이 필요하다.
+
+```mermaid
+flowchart LR
+    C["클라이언트\n(traceparent 선택)"] --> GW["maas-default-gateway"]
+    subgraph ns["llmd-test"]
+        EPP["EPP\nservice: inference-scheduler"]
+        V["vLLM\nservice: inference-server-decode"]
+    end
+    GW -->|ext_proc| EPP
+    GW --> V
+    subgraph tns["openshift-tempo"]
+        OC["OTel Collector llmd-otel\n(OTLP 4317/4318)"]
+        TG["Tempo gateway\n(인증·tenant)"]
+        T["TempoMonolithic llmd-tracing\n(tenant llmd, PV)"]
+    end
+    EPP -.->|OTLP| OC
+    V -.->|OTLP| OC
+    OC -->|SA 토큰 + X-Scope-OrgID| TG --> T
+    T --> UI["콘솔 Observe → Traces\n(COO UIPlugin)"]
+    TO["Tempo Operator"] -.->|관리| T
+    OO["OpenTelemetry Operator"] -.->|관리| OC
+    COO["Cluster Observability Operator"] -.->|관리| UI
+    subgraph rh["redhat-ods-monitoring (RHOAI 자체, 본 저장소 미사용)"]
+        RC["data-science-collector"] --> RT["data-science-tempomonolithic"]
+    end
+```
+
+- 권한: Collector의 SA에 tenant `llmd`의 traces `create`, 조회자에게 `get`을 부여한다(`llmd-tracing-traces-write/read`).
+- Gateway(Envoy)와 MaaS 인증(Authorino) 구간은 trace에 포함되지 않는다.
+
+켜기·끄기(`harness/` 디렉터리). 켜고 끌 때 vLLM pod가 순차 재기동되므로 여유 GPU 1장이 필요하다.
+
+```sh
+./harness.sh tracing                                   # Tempo, Collector, 콘솔 Traces UI 설치(1회)
+./harness.sh llmd-tracing                              # llmd-test 추적 켜기 + 요청 3건으로 수신 확인
+TRACING=off ./harness.sh llmd-tracing                  # 끄기
+LLMD_NAMESPACE=<ns> LLMD_NAME=<name> LLMD_TRACING_SAMPLER=0.1 ./harness.sh llmd-tracing   # 다른 모델, 샘플링 10%
+oc get llminferenceservice llmd-test -n llmd-test -o jsonpath='{.spec.tracing}'
+```
+
 ## UI로 보기
 
 URL은 클러스터마다 다르며 `AGENT.md`에 기록한다.
@@ -156,9 +210,9 @@ URL은 클러스터마다 다르며 `AGENT.md`에 기록한다.
   oc get route -n gpu-monitoring
   oc get secret gpu-grafana-admin-credentials -n gpu-monitoring -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d
   ```
-- **Jaeger UI(Tempo)** — Tempo operator가 관리하는 Route, OpenShift OAuth 로그인. 시나리오 25의 trace ID로 조회한다.
+- **Traces(Tempo)** — OpenShift 콘솔 Observe → Traces에서 `openshift-tempo/llmd-tracing`(tenant `llmd`)을 선택한다.
   ```sh
-  oc get route tempo-llmd-tracing-query-frontend -n openshift-tempo
+  oc get uiplugin distributed-tracing
   ```
 - **MaaS 모델 목록** — API 키로 등록 모델을 확인한다.
   ```sh

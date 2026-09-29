@@ -1,123 +1,119 @@
-# 시나리오 14: 지연(delay) 진단
+# 시나리오 14: 지연 진단
 
 **모듈:** 분산 환경 활용 > 지연 진단
-**관련 컴포넌트:** `kserve_vllm:request_queue_time_seconds`, `request_prefill_time_seconds`,
-`request_decode_time_seconds`, `prefix_cache_hits/queries_total`, `kv_cache_usage_perc`
+**관련 컴포넌트:** vLLM 지표 `kserve_vllm:request_{queue,prefill,decode}_time_seconds`, `time_to_first_token_seconds`,
+`prefix_cache_{hits,queries}_total`, `kv_cache_usage_perc`
 
 ## 목적
 
-"느리다"는 하나의 증상 뒤에 여러 원인이 있을 수 있다 — 스케줄러 큐 대기, prefill(프롬프트 처리) 지연,
-decode(토큰 생성) 지연, 낮은 prefix 캐시 히트율. 이 시나리오는 부하를 발생시킨 뒤 이 네 가지를
-**하나의 진단 리포트로 한 번에** 뽑아서, "다음에 뭘 고쳐야 하는지"를 바로 알 수 있게 한다.
+"느리다"는 증상은 대기(queue), 프롬프트 처리(prefill), 토큰 생성(decode) 중 어디에서든 생길 수 있다. 병목을 하나씩
+의도적으로 만든 부하 세 가지에 대해 vLLM 지표만으로 병목을 정확히 짚는지 검증하고, 판정 규칙을 정한다.
 
-## 요청 흐름 (MaaS 경유) — 지연이 어디서 쌓이나
+## 실험 설계
 
-```mermaid
-flowchart LR
-    C["클라이언트"] --> MG["MaaS Gateway\n(+토큰검증/레이트리밋\n— 이 구간 지연은 이 시나리오\n측정 범위 밖)"]
-    MG --> EPP["EPP\n(라우팅 결정 지연)"]
-    EPP --> Q["큐 대기\nrequest_queue_time_seconds"]
-    Q --> PF["Prefill\nrequest_prefill_time_seconds\n(+ prefix 캐시 히트율 영향)"]
-    PF --> DC["Decode\nrequest_decode_time_seconds\n(+ KV 캐시 사용률 영향)"]
-    DC --> R["응답"]
-    R --> C
+`llmd-test`(replica 2, `--max-num-seqs=4`), MaaS 경유, 부하별 60초.
 
-    style Q fill:#fff3cd
-    style PF fill:#fff3cd
-    style DC fill:#fff3cd
-```
+| 부하 | 구성 | 의도한 병목 |
+|---|---|---|
+| W1 | 짧은 프롬프트, 응답 16토큰, 동시 32 (pod당 처리 슬롯 4의 8배) | queue |
+| W2 | 매번 다른 약 5,000토큰 프롬프트, 응답 16토큰, 동시 2 | prefill (캐시 재사용 없음) |
+| W3 | 짧은 프롬프트, 응답 512토큰 고정(`ignore_eos`), 동시 4 | decode |
 
-**이 시나리오가 측정하는 구간은 노란색으로 표시된 세 곳(큐 대기/prefill/decode)** — vLLM 엔진 내부의
-시간 분해다. MaaS Gateway/EPP 자체의 라우팅 결정 지연은 이번 진단 리포트에 포함되지 않는다(별도로
-Gateway 쪽 메트릭/트레이스로 봐야 함 — 시나리오 13의 trace를 열어보면 Gateway→EPP→vLLM 각 구간의 실제
-소요 시간을 개별 요청 단위로 확인할 수 있다. 이 시나리오는 그 대신 **다수 요청의 집계 분포**를 준다).
+W1은 "사람이 많아서", W2는 "질문이 길어서", W3는 "답이 길어서" 느린 상황을 재현한다. `llmd-test`의 처리 슬롯은
+8개(pod 2 × 4)이므로 W1의 요청 32개는 대부분 줄을 서고, W2는 매번 처음 보는 긴 프롬프트를 캐시 없이 계산하며,
+W3는 토큰 512개를 하나씩 순서대로 생성한다.
 
-## 사전 조건
+**판정 규칙.** 부하가 돈 구간만 집계한 평균(`_sum` / `_count`)으로 두 가지를 판정한다.
 
-- 대상 `LLMInferenceService`가 Ready 상태
-- Thanos-querier 접근 가능
+- TTFT 원인: queue와 prefill 중 큰 쪽
+- 요청 전체 원인: queue, prefill, decode 중 가장 큰 쪽
+
+vLLM 히스토그램의 첫 구간 경계가 0.3초여서, 0.3초 미만인 값의 p95는 모두 0.285초로 계산된다. 따라서 p95는 참고로만 쓴다.
 
 ## 절차
 
 ```sh
-cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
-
-# 1) 모델 배포
-LLMD_NAMESPACE=llmd-scenario14 LLMD_NAME=llmd-latency-demo ./harness.sh scenario14-llmd-latency-start
-
-# 2) 부하 발생 + 진단 리포트 출력 (concurrency=6, 60초)
-LLMD_NAMESPACE=llmd-scenario14 LLMD_NAME=llmd-latency-demo ./harness.sh scenario14-llmd-latency-diagnose
-
-# 3) 정리
-LLMD_NAMESPACE=llmd-scenario14 LLMD_NAME=llmd-latency-demo ./harness.sh scenario14-llmd-latency-stop
+cd openshift-ai-llmd-demo/harness
+./harness.sh scenario14-llmd-latency                     # W1~W3
+S14_WORKLOADS="W2" S14_DURATION=90 ./harness.sh scenario14-llmd-latency
 ```
 
-## 진단 리포트 읽는 법
+## 실측 결과 (2026-09-29, RHOAI 3.5.1, Qwen2.5-1.5B-Instruct, A10G, 추적 켬)
 
-스크립트가 출력하는 5개 지표를 이렇게 해석한다:
+| 부하 | queue | prefill | decode | TTFT | 판정 (TTFT / 요청 전체) |
+|---|---|---|---|---|---|
+| W1 | **0.844초** | 0.033초 | 0.254초 | 0.862초 | queue 96% / **queue 75%** |
+| W2 | 0.000초 | **0.242초** | 0.226초 | 0.251초 | prefill 100% / **prefill 52%** |
+| W3 | 0.000초 | 0.033초 | **8.570초** | 0.047초 | prefill / **decode 99%** |
 
-| 지표 | 높으면 의미하는 것 | 대응 |
+값은 평균이다. 캐시 적중률은 W1 77%, W2 0.4%, W3 81%이며, KV 캐시 최대 사용률은 1% 미만이다.
+
+- 세 부하 모두 의도한 병목을 판정하였다.
+- W2는 prefill과 decode의 차이가 작다(0.24초 대 0.23초). 두 단계 판정의 TTFT 쪽(prefill 100%)이 증상을 명확히 설명한다.
+- 캐시 적중 시 prefill은 0.033초로, 시나리오 13의 trace 측정(0.032초)과 일치한다.
+
+### 대시보드로 본 병목
+
+Grafana `llm-d Observability` 대시보드(`./harness.sh llmd-monitoring`)의 지연 분해 패널로 세 부하를 한 화면에서 비교한다.
+16:23~16:24는 W2, 16:25~16:27은 W3, 16:29~16:31은 W1 구간이다.
+
+![지연 분해 대시보드 전체](images/14/grafana-dashboard.png)
+
+*그림 1. 대시보드 전체(namespace `llmd-test`, 16:22~16:32).*
+
+![요청당 평균 지연 분해](images/14/grafana-latency-breakdown-per-req.png)
+
+*그림 2. Latency breakdown per request. W3 구간에서 decode(파랑)가 약 8.6초로 솟고, W1 구간에서 queue(주황)가 가장 두껍다.*
+
+![요청 시간 구성비](images/14/grafana-share-of-req-time.png)
+
+*그림 3. Share of request time. W2는 prefill(보라, 최대 52%), W3는 decode(파랑, 최대 99.6%), W1은 queue(주황, 최대 75%)가
+면적 대부분을 차지한다.*
+
+![대기·실행 요청 수](images/14/grafana-request-wait-ratio.png)
+
+*그림 4. Requests waiting / running. W1 구간에서만 대기 요청(주황)이 최대 23건으로 급증하고, W2·W3는 대기가 없다.*
+
+### trace로 본 병목
+
+측정 중 추적(샘플링 100%)을 켜 두어, 요청마다 vLLM `llm_request` span이 Tempo에 남았다. vLLM은 queue·prefill·decode를
+하위 span이 아닌 속성(`gen_ai.latency.time_in_queue`, `time_in_model_prefill`, `time_in_model_decode`)으로 기록하므로,
+막대 길이가 아닌 span 속성에서 병목을 확인한다. 콘솔 Observe → Traces(`openshift-tempo/llmd-tracing`, tenant `llmd`)에서
+다음 TraceQL로 부하별 trace를 찾는다.
+
+| 부하 | TraceQL | 대표 trace | queue | prefill | decode |
+|---|---|---|---|---|---|
+| W1 | `{ span.gen_ai.latency.time_in_queue > 0.8 && span.gen_ai.request.max_tokens = 16 }` | `00949892…789309f0` (1.31초) | **0.986초** | 0.032초 | 0.260초 |
+| W2 | `{ span.gen_ai.usage.prompt_tokens > 4000 && span.gen_ai.latency.time_in_model_prefill > 0.2 }` | `02fb0693…74a214bd8` (0.50초) | 0.000초 | **0.236초** | 0.224초 |
+| W3 | `{ span.gen_ai.usage.completion_tokens = 512 }` | `22f17948…99c742c39` (8.34초) | 0.000초 | 0.031초 | **8.273초** |
+
+**W1 — queue.** 요청 1.31초 중 0.99초가 처리 슬롯 대기이다. `llm_request` 막대에는 대기가 구분되지 않는다.
+
+![W1 검색](images/14/w1-search.png)
+![W1 trace 상세](images/14/w1-trace.png)
+
+**W2 — prefill.** 약 5,000토큰 프롬프트의 prefill(0.236초)이 TTFT(0.245초)의 대부분이다.
+
+![W2 검색](images/14/w2-search.png)
+![W2 trace 상세](images/14/w2-trace.png)
+
+**W3 — decode.** 512토큰 생성(8.27초)이 요청 전체(8.34초)를 차지한다.
+
+![W3 검색](images/14/w3-search.png)
+![W3 trace 상세](images/14/w3-trace.png)
+
+*그림 5~7. 부하별 TraceQL 검색 결과와 trace 상세. 붉은 상자는 `llm_request` span의 지연 속성이다. EPP의 pod 선택 span은
+세 경우 모두 수십 µs이다.*
+
+## Summary: 진단 가이드
+
+| 판정 | 의미 | 조치 |
 |---|---|---|
-| Queue time (p95) | 요청이 처리되기 전 스케줄러에서 대기 | replica 늘리기(시나리오 11) 또는 EPP 라우팅/InferencePool 포화 확인 |
-| Prefill time (p95) | 프롬프트가 길거나 캐시를 못 씀 | prefix 캐시 히트율 같이 확인, 프롬프트 재사용 패턴 점검 |
-| Decode time (p95) | 토큰 생성 자체가 느림 | KV 캐시 사용률/preemption 확인, 모델·GPU 스펙 재검토(TP 등) |
-| Prefix cache hit rate (hits/queries) | 낮으면 매번 처음부터 재계산 | 시스템 프롬프트/컨텍스트 재사용 여부, 캐시 크기(GPU 메모리) 검토 |
-| KV cache usage | preemption(선점) 위험 | replica 늘리거나 `--gpu-memory-utilization` 조정 |
+| queue | 처리 슬롯 대기 | replica 증설(시나리오 11), `--max-num-seqs` 상향 |
+| prefill | 프롬프트 처리 | prefix 재사용, 캐시 인지 분배(시나리오 11), 프롬프트 단축 |
+| decode | 토큰 생성 | `max_tokens` 축소, replica 증설, 더 큰 GPU 또는 텐서 병렬화(시나리오 15) |
 
-## 예상 결과
-
-- 정상 상태에서는 queue/prefill/decode 시간이 모두 낮고 캐시 히트율이 높아야 함.
-- 부하가 커지면 먼저 queue time이 늘어나기 시작 (스케줄러 대기) → 그 다음 decode time (동시 실행
-  시퀀스 증가로 인한 경합) 순으로 악화되는 게 일반적인 패턴.
-
-## 실측 결과 (2026-09-08, myocp/sandbox3790, Qwen2.5-7B-Instruct, replica 1, concurrency=6, 60초)
-
-**통과 — 병목이 명확하게 한 곳으로 짚였다.**
-
-| 지표 | 실측치 (p95) |
-|---|---|
-| Queue time | 0.285 s |
-| Prefill time | 0.289 s |
-| **Decode time** | **9.633 s** |
-| TTFT | 0.362 s |
-| Prefix cache hit rate | hits≈2148.6 / queries≈2863.8 (≈75%) |
-| KV cache usage | 0 (preemption 없음) |
-
-**읽기:** queue/prefill/TTFT는 전부 1초 미만으로 정상인데 decode time만 9.6초로 압도적으로 크다 —
-이 부하 조건(동시 6개, 응답 최대 150토큰)에서는 **토큰 생성(decode) 자체가 유일한 병목**이라는 뜻.
-캐시 히트율(75%)도 준수해서 prefill 쪽 문제는 아님. 진단 리포트의 읽는 법 표가 실제로 맞아떨어진
-사례 — decode가 병목이면 다음으로 볼 것: KV 캐시 사용률(0%라 preemption은 아님) → 남은 원인은 동시
-요청 수 대비 GPU 연산 자체의 한계, 즉 replica 추가(시나리오 11) 또는 더 큰/빠른 GPU·텐서 병렬화(시나리오
-15)가 다음 조치.
-
-## 겪은 이슈 (하네스 버그, 이미 수정됨)
-
-- scenario12와 동일한 두 버그(`"model":"placeholder"` 하드코딩, `oc whoami -t` 토큰 실패)에 걸렸다가
-  수정 후 재실행 — 첫 실행은 모든 지표가 `NaN`/0으로 나와서 바로 이상 신호를 알아챌 수 있었음 (데이터가
-  하나도 없으면 진단 리포트 자체가 무의미하다는 걸 스스로 드러내는 셈이라, 이런 실패 모드는 오히려
-  발견하기 쉬웠다).
-
-## 재검증 (2026-09-08, 하네스를 `openshift-aws-harness` → `monitoring-llmd-rhoai/harness`로 옮긴 뒤)
-
-리포 재구성 후 **이 리포만으로** 처음부터 다시 배포→모니터링 적용→진단까지 실행해서 하네스 이전이
-제대로 됐는지 확인함. 결과:
-
-| 지표 | 1차 실측 | 재검증 |
-|---|---|---|
-| Queue time | 0.285s | 0.285s |
-| Prefill time | 0.289s | 0.285s |
-| **Decode time** | 9.633s | **4.857s** |
-| TTFT | 0.362s | 0.157s |
-| 캐시 히트율 | ~75% | ~75% |
-
-Decode/TTFT 수치가 달라진 건 하네스 이전과는 무관 — 실행 시점의 클러스터 부하(다른 시나리오 동시 실행
-여부), 모델 웜업 상태 등 조건 차이로 자연스러운 변동. **queue/prefill/캐시 히트율이 거의 그대로인 것,
-그리고 decode가 두 번 다 압도적 1위 병목이라는 결론 자체는 재현됨** — 진단 방법론이 안정적이라는 뜻.
-Grafana `llm-d Observability` 대시보드에서도 `/api/ds/query`로 같은 시점 TTFT 값이 실제로 표시되는 것까지
-API 레벨로 확인함(`AGENT.md`/`lessonlearn.md` 참고 — 이 검증 과정에서 대시보드 datasource UID 버그도
-같이 발견/수정됨).
-
-## 현재 상태 (2026-09-08)
-
-`llmd-scenario14/llmd-latency-demo`가 계속 떠 있고 모니터링도 적용됨 — Grafana에서 `llmd-scenario14`
-선택해서 바로 확인 가능. 정리하려면 `./harness.sh scenario14-llmd-latency-stop`.
+```sh
+QUERY='sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace="<ns>"}[5m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace="<ns>"}[5m]))' \
+  ./harness.sh llmd-promql          # prefill, decode도 같은 형태로 평균을 구한다
+```

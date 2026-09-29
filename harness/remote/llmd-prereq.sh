@@ -6,6 +6,7 @@
 #   3. hf:// ClusterStorageContainer                                         (check only -> created by llmd-deploy-model)
 #   4. User Workload Monitoring (scrapes the auto-generated PodMonitor/ServiceMonitor)  (prepare)
 #   5. Grafana Operator + instance + Thanos datasource in MONITORING_NAMESPACE           (prepare)
+#      GRAFANA_ADMIN_PASSWORD=<pw> sets a fixed admin password (default: operator-generated)
 #   6. Free GPU count                                                        (report)
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
@@ -151,6 +152,23 @@ spec:
             persistentVolumeClaim:
               claimName: ${GRAFANA_NAME}-data
 YAML
+
+# Optional fixed admin password. The operator logs in with the password in its own
+# <name>-admin-credentials Secret, so change it there (an env override breaks the operator's
+# login), then reset the value Grafana already stored on its PVC.
+if [ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+  for _ in $(seq 1 30); do
+    oc get secret "${GRAFANA_NAME}-admin-credentials" -n "$MONITORING_NAMESPACE" &>/dev/null && break
+    sleep 5
+  done
+  oc patch secret "${GRAFANA_NAME}-admin-credentials" -n "$MONITORING_NAMESPACE" --type=merge \
+    -p "{\"stringData\":{\"GF_SECURITY_ADMIN_PASSWORD\":\"${GRAFANA_ADMIN_PASSWORD}\"}}" >/dev/null
+  oc rollout restart "deploy/${GRAFANA_NAME}-deployment" -n "$MONITORING_NAMESPACE" >/dev/null
+  oc rollout status "deploy/${GRAFANA_NAME}-deployment" -n "$MONITORING_NAMESPACE" --timeout=300s >/dev/null
+  oc exec -n "$MONITORING_NAMESPACE" "deploy/${GRAFANA_NAME}-deployment" -c grafana -- \
+    grafana cli --homepath /usr/share/grafana admin reset-admin-password "$GRAFANA_ADMIN_PASSWORD" >/dev/null
+  ok "Grafana admin password set (GRAFANA_ADMIN_PASSWORD)"
+fi
 
 # Token is inlined into secureJsonData: valuesFrom into secureJsonData
 # silently resolves empty on grafana-operator v5 (every query 401s).

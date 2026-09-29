@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared by the llm-d scenario scripts (scenario11-14): deploys one
+# Shared by the llm-d scenario scripts (scenario 24, 29, ad hoc): deploys one
 # LLMInferenceService directly from a HuggingFace repo (no PVC/data
 # connection needed). Runs ON the bastion. Idempotent.
 #

@@ -1,7 +1,7 @@
 # 시나리오 25: 엔드-투-엔드 분산 트레이싱
 
 **모듈:** 서빙 및 추론 > 분산 추론 (GA)
-**관련 컴포넌트:** `spec.tracing`, preset `v3-5-1-kserve-config-llm-tracing`, OpenTelemetry Collector, TempoStack
+**관련 컴포넌트:** `spec.tracing`, preset `v3-5-1-kserve-config-llm-tracing`, OpenTelemetry Collector, TempoMonolithic
 
 ## 목적
 
@@ -17,7 +17,7 @@ flowchart LR
     GW -.-> OC["OTel Collector"]
     EPP -.-> OC
     V -.-> OC
-    OC --> T["TempoStack\n(Jaeger UI)"]
+    OC --> T["TempoMonolithic\n(Jaeger UI)"]
 ```
 
 preset 기본값: `exporter: otlp`, `exporterEndpoint: http://otel-collector:4317`,
@@ -87,9 +87,8 @@ Tempo distributor(`tempo-llmd-tracing-distributor.openshift-tempo.svc:4317`)로 
 
 - Gateway(Envoy)와 MaaS 인증(Authorino) 구간은 trace에 포함되지 않는다. 인증 지연(시나리오 23의 200ms
   타임아웃)은 trace로 관측할 수 없다.
-- Jaeger UI는 TempoStack의 `jaegerQuery.ingress.type: route`로 노출한다. 수동 `oc expose` Route는 Tempo
-  operator가 제거한다. operator Route는 OpenShift OAuth(브라우저 로그인)로 보호되며 Bearer 토큰 API 호출은
-  거부된다(API 검증은 `oc port-forward svc/tempo-llmd-tracing-query-frontend 16686`).
+- 조회는 콘솔 Observe → Traces(`openshift-tempo/llmd-tracing`, tenant `llmd`)에서 한다. 하네스는 Tempo gateway를
+  reader SA 토큰으로 조회한다(`tempo_trace`). 구성은 [README 트레이싱](../../README.md#트레이싱)을 따른다.
 - 샘플링 비율 기본값은 0.05(preset)이며 데모에서는 `samplerArg: "1.0"`을 사용한다.
 
 ## 검증 필요 사항
