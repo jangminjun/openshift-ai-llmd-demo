@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# llm-d / MaaS harness for this repo (monitoring-llmd-rhoai). Assumes the
+# llm-d / MaaS harness for this repo (openshift-ai-llmd-demo). Assumes the
 # base cluster already exists (bastion, OpenShift, GPU nodes, RHOAI,
 # monitoring/logging) -- built separately via openshift-aws-harness
 # (https://github.com/jangminjun/openshift-aws-harness), which stays the
 # generic "install a cluster" tool. This harness only adds what's specific
 # to llm-d testing: MaaS/RHCL, request tracing, model deployment, and the
-# scenario 11-14 demos (docs/scenarios/*.md). Idempotent where the
+# scenarios 11-14 and 21-29 (docs/scenarios/*.md). Idempotent where the
 # underlying remote scripts are idempotent.
 #
 # Usage: ./harness.sh <subcommand> [args]
 #   llmd-prereq                         check/prepare llm-d prerequisites (UWM, Grafana, CRD, Gateway, free GPU)
 #   maas                                install RHCL + enable MaaS (auto: RHOAI 3.5+ maas.sh / 3.3-3.4 maas-rhoai34.sh)
-#   maas-register-model                 register an LLMInferenceService with MaaS (LLMD_NAMESPACE/LLMD_NAME, MAAS_GROUP/MAAS_USERS)
+#   maas-register-model                 register an LLMInferenceService with MaaS (LLMD_NAMESPACE/LLMD_NAME, MAAS_GROUP/MAAS_USERS,
+#                                       MAAS_TOKEN_LIMIT default 1e9/h: benchmarks exceed a realistic per-user quota)
 #   maas-unregister-model               remove an LLMInferenceService from MaaS (LLMD_NAMESPACE/LLMD_NAME)
 #   maas-api-key                        mint a MaaS API key for the oc user -> Secret llmd-bench/loadgen-token (used by llmd-loadgen)
 #   llmd-deploy-model                     deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
@@ -22,6 +23,10 @@
 #   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
 #                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
 #   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
+#   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
+#   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
+#   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
+#   scenario14-llmd-latency             latency diagnosis: queue / prefill / decode bottleneck workloads
 #   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
 #   scenario22-llmd-epp-scorers         default EPP vs random-picker, multi-document workload
 #   scenario23-llmd-lifecycle           rolling update under continuous traffic
@@ -32,10 +37,6 @@
 #   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
 #   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment (needs llmd-test-down first)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
-#   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
-#   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
-#   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
-#   scenario14-llmd-latency             latency diagnosis: queue / prefill / decode bottleneck workloads
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
 # defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
@@ -80,7 +81,7 @@ cmd_maas() {
 }
 
 cmd_maas_register_model() {
-  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:?set LLMD_NAMESPACE}' LLMD_NAME='${LLMD_NAME:?set LLMD_NAME}'     MAAS_GROUP='${MAAS_GROUP:-llmd-demo}' MAAS_USERS='${MAAS_USERS:-}' MAAS_TOKEN_LIMIT='${MAAS_TOKEN_LIMIT:-100000}'     MAAS_TOKEN_WINDOW='${MAAS_TOKEN_WINDOW:-1h}' MAAS_PRIORITY='${MAAS_PRIORITY:-10}'     bash -s" < ./remote/maas-register-model.sh
+  ssh_bastion "LLMD_NAMESPACE='${LLMD_NAMESPACE:?set LLMD_NAMESPACE}' LLMD_NAME='${LLMD_NAME:?set LLMD_NAME}'     MAAS_GROUP='${MAAS_GROUP:-llmd-demo}' MAAS_USERS='${MAAS_USERS:-}' MAAS_TOKEN_LIMIT='${MAAS_TOKEN_LIMIT:-1000000000}'     MAAS_TOKEN_WINDOW='${MAAS_TOKEN_WINDOW:-1h}' MAAS_PRIORITY='${MAAS_PRIORITY:-10}'     bash -s" < ./remote/maas-register-model.sh
 }
 
 cmd_maas_unregister_model() {
@@ -204,7 +205,9 @@ cmd_status() {
     echo '=== llm-d LLMInferenceServices ==='; oc get llminferenceservice -A; \
     echo '=== GPU nodes ==='; oc get nodes -l nvidia.com/gpu.present=true -o jsonpath='{range .items[*]}{.metadata.name}{\"\t\"}{.metadata.labels.node\\.kubernetes\\.io/instance-type}{\"\n\"}{end}'; \
     echo '=== MaaS ==='; oc get gateway -n openshift-ingress 2>&1; \
-    echo '=== Tracing ==='; oc get tempomonolithic -n ${TRACING_NAMESPACE:-openshift-tempo} 2>&1 || echo '(Tempo not installed: ./harness.sh tracing)'"
+    echo '=== MaaS token limits ==='; oc get maassubscription -A -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.modelRefs[*]}{.namespace}/{.name}={.tokenRateLimits[0].limit}/{.tokenRateLimits[0].window} {end}{\"\n\"}{end}' 2>&1; \
+    echo '=== Tracing ==='; oc get tempomonolithic,opentelemetrycollector -n ${TRACING_NAMESPACE:-openshift-tempo} 2>&1 || echo '(not installed: ./harness.sh tracing)'; \
+    oc get llminferenceservice -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: tracing={.spec.tracing.exporterEndpoint} sampler={.spec.tracing.samplerArg}{\"\n\"}{end}'"
 }
 
 case "$cmd" in

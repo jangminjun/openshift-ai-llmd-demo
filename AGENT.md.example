@@ -61,8 +61,8 @@ gitignore되어 있어 여기까지는 안전하지만, 커밋 전 `git status`/
   oc get secret gpu-grafana-admin-credentials -n gpu-monitoring \
     -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d
   ```
-- Jaeger UI URL (시나리오13, `./harness.sh tracing` 실행 후 Route 자동 생성됨):
-  `<https://jaeger-route-host>`
+- Traces: OpenShift 콘솔 Observe → Traces, 인스턴스 `openshift-tempo/llmd-tracing`(tenant `llmd`)
+  (`./harness.sh tracing`, `./harness.sh llmd-tracing` 실행 후)
 
 ## 실측 아키텍처 요약 (이 클러스터 한정 구체값)
 

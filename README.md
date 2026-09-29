@@ -125,17 +125,23 @@ oc get nodes -l nvidia.com/gpu.present=true
    ```sh
    ./harness.sh llmd-test-up                 # manifests/llmd-test-llminferenceservice.json
    LLMD_NAMESPACE=llmd-test LLMD_NAME=llmd-test MAAS_USERS=<user>,system:serviceaccount:llmd-bench:loadgen \
-     ./harness.sh maas-register-model
+     ./harness.sh maas-register-model          # 토큰 한도 기본 10억/시간(부하 시험용)
    ./harness.sh maas-api-key                  # sk-oai-* 키 → Secret llmd-bench/loadgen-token
    oc get llminferenceservice,inferencepool -n llmd-test
    ```
 4. **관측 구성** — PrometheusRule, Grafana 대시보드, 트레이싱
    ```sh
+   GRAFANA_ADMIN_PASSWORD=<pw> ./harness.sh llmd-prereq      # 선택: Grafana admin 암호 고정
    LLMD_NAMESPACE=llmd-test ./harness.sh llmd-monitoring
-   ./harness.sh tracing
+   ./harness.sh tracing && ./harness.sh llmd-tracing         # Tempo·Collector·콘솔 Traces, llmd-test 추적 켜기
+   ./harness.sh status
    ```
-5. **시나리오 실행** — 21~28은 `llmd-test`로 실행하고, 24·29는 모델을 교체하여 마지막에 실행한다.
+5. **시나리오 실행** — 11~14, 21~28은 `llmd-test`로 실행하고, 24·29는 모델을 교체하여 마지막에 실행한다.
    ```sh
+   ./harness.sh scenario11-llmd-dp-affinity                     # S11_ARMS="A B C D E" 또는 "F0 F1 F2"
+   ./harness.sh scenario12-llmd-failure
+   ./harness.sh scenario13-llmd-tracing
+   ./harness.sh scenario14-llmd-latency
    ./harness.sh scenario22-llmd-epp-scorers                     # 예시. S22_* 로 규모 조정
    ./harness.sh llmd-test-down && ./harness.sh scenario29-llmd-canary-up
    ./harness.sh scenario29-llmd-canary-shift

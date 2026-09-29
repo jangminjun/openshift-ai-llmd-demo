@@ -20,7 +20,7 @@ MAAS_GROUP="${MAAS_GROUP:-llmd-demo}"
 # only carries system:authenticated* groups in TokenReview, not Group objects,
 # so group-only subscriptions never match oc-token callers.
 MAAS_USERS="${MAAS_USERS:-}"
-MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-100000}"
+MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-1000000000}"   # benchmark default; 1e5 caused 429s (scenario 11)
 MAAS_TOKEN_WINDOW="${MAAS_TOKEN_WINDOW:-1h}"
 MAAS_PRIORITY="${MAAS_PRIORITY:-10}"         # must not collide with other subscriptions' priority
 TENANT_NAMESPACE="${TENANT_NAMESPACE:-models-as-a-service}"
