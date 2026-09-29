@@ -15,6 +15,42 @@ LLM 서빙의 데이터 병렬화(DP)는 모델 전체를 GPU마다 복제하고
 1. **확장 효과.** replica 1(before) 대비 replica 2(after)의 처리량과 지연.
 2. **분배 방식의 효과.** 같은 replica 2에서 캐시를 모르는 분배와 llm-d의 캐시 인지 분배의 차이.
 
+## 배경: EPP의 분배 기준과 session affinity
+
+EPP는 요청마다 후보 pod에 scorer 점수를 가중 합산하여 최고점 pod를 고른다. filter는 점수 계산 전에 후보를
+제외한다. RHOAI 3.5.1 기본 설정은 `prefix-cache-scorer`(3), `queue-scorer`(2), `kv-cache-utilization-scorer`(2),
+`no-hit-lru-scorer`(2)이며, session affinity 플러그인은 이미지에 포함되어 있으나 기본 설정에는 없다.
+
+**session affinity**는 같은 세션(대화)의 요청을 처음 처리한 pod로 계속 보내는 방식이다.
+
+1. 첫 요청: EPP가 기존 scorer로 pod를 고르고, 응답 헤더 `x-session-token`에 그 pod의 식별 정보를 담아 반환한다.
+2. 클라이언트: 토큰을 대화 단위로 저장하고 다음 요청의 헤더에 그대로 넣는다.
+3. 다음 요청: EPP가 토큰을 해석해 해당 pod를 우대(scorer)하거나 해당 pod로 한정(filter)한다.
+
+| 구분 | `session-affinity-scorer` | `session-affinity-filter` |
+|---|---|---|
+| 동작 | 토큰의 pod에 점수(0~1) × 가중치를 더함 | 후보를 토큰의 pod 하나로 제한 |
+| 강도 | soft sticky. 다른 scorer 합이 크면 다른 pod 선택 | hard sticky. 해당 pod가 포화되어도 이동하지 않음 |
+| 장점 | 고정성과 부하 균형을 함께 확보 | 고정성 최대 |
+| 위험 | 가중치가 낮으면 고정성 약화 | 세션별 부하가 불균등하면 hot-spot, 대기열 증가 |
+| 설정 위치 | 프로파일의 scorer 목록(`weight` 지정) | 프로파일의 맨 앞(scorer보다 먼저 평가) |
+
+**prefix 캐시 분배와의 차이.** `prefix-cache-scorer`는 요청 내용(프롬프트 prefix)을 해시해 어느 pod로 보냈는지
+EPP 메모리의 인덱스에 기록하고, 같은 prefix를 같은 pod로 모은다. session affinity는 내용과 무관하게 세션을
+기준으로 하며, 상태를 EPP가 아닌 클라이언트의 토큰이 보관한다. 따라서 평상시에는 대화 이력이 곧 prefix여서
+두 방식의 결과가 같지만(조건 C, D), EPP가 재시작되어 인덱스가 사라지면 토큰만 남는다(조건 F).
+
+설정 예(기본 설정에 scorer를 추가하는 경우, 설정 전체를 교체한다):
+
+```json
+{"plugins": [{"type": "session-affinity-scorer"}, ...기본 plugins...],
+ "schedulingProfiles": [{"name": "default", "plugins": [...기본 scorer...,
+   {"pluginRef": "session-affinity-scorer", "weight": 3}, {"pluginRef": "max-score-picker"}]}]}
+```
+
+filter는 `{"type": "session-affinity-filter"}`를 plugins에 추가하고 프로파일 목록의 맨 앞에
+`{"pluginRef": "session-affinity-filter"}`를 둔다. 토큰의 실제 인코딩 형식은 확인하지 않았다(llm-d 문서 기준).
+
 ## 실험 설계
 
 | 조건 | replica | 분배 경로 | 분배 기준 |
@@ -113,4 +149,29 @@ EPP 재시작(1턴 후) 영향. 적중률·TTFT는 2~3턴 기준이다.
 - **session affinity(D, E)는 평상시 추가 이득이 없다.** 대화 이력이 곧 prefix이므로 C로 충분하다.
 - **EPP 재시작은 캐시 재사용의 약 1/4을 잃게 한다(F1).** prefix 인덱스가 EPP 메모리에만 있기 때문이다.
 - **session affinity는 EPP 재시작 시 가치가 있다(F2).** 세션 토큰이 클라이언트에 있어 적중률 94.2%를 유지한다.
+  우연이 아님은 2턴으로 확인된다. 3턴은 두 조건 모두 새 EPP가 2턴의 위치를 기록하므로 거의 적중한다고 보면,
+  2턴이 원래 pod로 간 비율은 F1 약 45%(2-way 무작위 50%와 유사), F2 약 88%이다. 200개 대화가 50% 확률일 때의
+  표준편차는 3.5%p이므로 88%는 평균보다 약 11 표준편차 높다. 단, 1회 측정이고 적중률(토큰 기준)로부터의
+  역산이며 요청별 pod를 직접 추적하지 않았다.
 - MaaS 경로의 500(0.2~1.2%)은 Authorino 인증 200ms 기한 초과이며 모델과 무관하다([lessonlearn.md](../../lessonlearn.md)).
+
+## Summary: 운영 가이드
+
+데이터 병렬화의 효과는 분배 방식이 결정한다. EPP 분배는 GPU 증설 효과를 온전히 얻고(×1.99), EPP 재시작으로
+잃는 캐시는 session affinity가 대부분 보완한다(72.3% → 94.2%).
+
+1. **replica 2 이상은 EPP로만 분배한다.** 워크로드 `Service` 직접 노출은 캐시를 잃는다(×1.55).
+2. **채팅 서비스는 `session-affinity-scorer`를 켠다.** 채팅은 한 대화가 여러 요청으로 이어지고 매 요청이 이전
+   대화 전체를 다시 보내므로, 같은 pod로 가야 캐시를 재사용한다. 단발 요청 서비스에는 이득이 없다.
+   클라이언트(앱)는 응답 헤더 `x-session-token`을 대화별로 저장해 다음 요청에 넣어야 하며, 그렇지 않으면 효과가 없다.
+   `session-affinity-filter`(강제 고정)보다 scorer를 우선한다. filter는 토큰의 pod가 붐벼도 다른 pod로 보내지 않아
+   hot-spot(특정 pod에만 요청이 몰려 그 pod의 대기열과 지연만 커지는 현상)이 생길 수 있다. 본 측정은 대화 길이가
+   균일해 hot-spot이 나타나지 않았으며(E), 불균등 부하에서의 위험은 미검증이다.
+3. **EPP 설정 변경·재시작은 저부하 시간에 한다.** 재시작 직후 캐시 적중률과 TTFT가 일시적으로 나빠진다.
+4. **pod별 캐시 적중률과 요청 분배를 모니터링한다.**
+
+```sh
+oc get llminferenceservice <name> -n <ns> -o jsonpath='{.spec.router.scheduler.config.inline}'
+```
+
+1.5B 모델, replica 2, 1회 측정 결과이며 대형 모델·다수 replica에서는 수치가 달라질 수 있다.
