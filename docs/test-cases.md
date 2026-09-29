@@ -1,8 +1,8 @@
 # QA 테스트케이스: OpenShift AI + llm-d 관측성
 
 **모듈:** 모니터링/평가 > 중앙 집중식 플랫폼 관측성
-**관련 컴포넌트:** OpenShift AI Operator(RHOAI 3.4.4), KServe `LLMInferenceService`, Prometheus/Alertmanager
-스택(Cluster Monitoring + User Workload Monitoring) / OCP 4.19.9+
+**관련 컴포넌트:** OpenShift AI Operator(RHOAI 3.5.1, 실측은 3.4.4), KServe `LLMInferenceService`, Prometheus/Alertmanager
+스택(Cluster Monitoring + User Workload Monitoring) / OCP 4.22
 
 **실측 대상 (myocp 클러스터, 2026-09-07 확인):** `LLMInferenceService qwen25-coder-7b`
 (네임스페이스 `qwen25-coder-7b`), `llm-d.ai/role=both`(prefill/decode 비분리 단일 워크로드).

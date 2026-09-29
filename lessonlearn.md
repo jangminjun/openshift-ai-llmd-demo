@@ -2,6 +2,39 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-29 — sandbox3444 신규 클러스터 준비
+
+- **MaaS 인증 전 요청 500 (Authorino TLS 불일치).** odh-model-controller가 생성하는
+  `maas-default-gateway-authn-ssl` EnvoyFilter는 Authorino(50051)에 TLS로 접속하나, `maas.sh`는 listener TLS를
+  끄고 있었다. 인증이 필요한 모든 요청이 upstream 없이 500을 반환하고, Gateway 로그에 wasm-shim
+  `gRPC status code is not OK`가 남는다. `/health`만 200이다. listener TLS를 켜고 service-CA 인증서
+  `authorino-server-cert`를 사용하여 해결하였으며 `maas.sh`에 반영하였다.
+  ```sh
+  oc patch authorino authorino -n kuadrant-system --type=merge \
+    -p '{"spec":{"listener":{"tls":{"enabled":true,"certSecretRef":{"name":"authorino-server-cert"}}}}}'
+  ```
+- **부하 생성기 문서 본문이 단일 단어 반복이었다.** `loadgen.py`가 단어마다 `random.Random(seed)`를 새로 만들어
+  `shared-prefix`·`multi-prefix`·`multi-turn` 문서가 한 단어의 반복이 되었다(수정: 문서당 RNG 1개). 문서 번호가
+  선두에 있어 prefix는 문서별로 고유하므로 캐시·분배 결과(시나리오 11, 22, 27)는 유효하나, 내용의 현실성은 낮았다.
+- **MaaS 500의 실체는 Authorino 평가 기한 초과.** 500 응답은 약 200ms, 23바이트, upstream 없음이며, 같은
+  request id의 Authorino 응답은 `UNAVAILABLE`(평가가 200ms 기한 초과로 취소)이다. Authorino 평가 시간은 98.1%가
+  100ms 이하이나 1.6%가 100~200ms, 0.3%가 200ms를 넘는다. 주원인은 부하 시작 시의 동시 첫 요청으로, maas-api
+  API 키 검증이 최대 135~210ms로 지연되었다(22건 중 19건). 나머지는 maas-api가 1ms 미만인 시점의 꼬리 지연이며
+  GC(최대 12ms)는 원인이 아니다. Authorino는 replica 1, resource requests 없음이다. 추적 방법은 다음과 같다.
+  ```sh
+  oc logs -n openshift-ingress deploy/maas-default-gateway-maas-gateway-class | grep '" 500 '   # request id 확보
+  oc logs -n kuadrant-system deploy/authorino | grep <request-id>                              # UNAVAILABLE 확인
+  oc get --raw /api/v1/namespaces/kuadrant-system/services/authorino-controller-metrics:8080/proxy/server-metrics \
+    | grep auth_server_response_status
+  ```
+- **GPU 증설 시 AZ 재고 부족.** GPU MachineSet이 단일 AZ(us-east-1c)에 고정되어 있어, 같은 타입
+  g5.24xlarge의 두 번째 인스턴스가 `InsufficientInstanceCapacity`로 생성되지 않았다. Machine은 오류 없이
+  `Provisioning`에 머무르므로, 원인은 `machine-api-controllers`의 `machine-controller` 로그에서 확인한다.
+  증설이 필요하면 다른 AZ에 MachineSet을 복제하거나, 한 노드의 GPU 4장 안에서 시나리오를 수행한다.
+- **MinIO 공개 이미지 사용 불가.** `quay.io/minio/minio`, `docker.io/minio/minio` 모두 pull이 거부된다
+  (`unauthorized`). `tracing`을 TempoStack(S3) 대신 TempoMonolithic(PV 저장)으로 전환하였다. OTLP 수신은
+  `tempo-llmd-tracing:4317`, Jaeger API는 `svc/tempo-llmd-tracing-jaegerui:16686`이다.
+
 ## 2026-09-23 — RHOAI 3.5.1(sandbox1314)에서 하네스 재검증
 
 - **bastion 의존 제거.** bastion SSH 키가 AWS 등록 키와 불일치하여 접속 불가. `remote/*.sh`는 `oc`만
@@ -14,7 +47,7 @@
   생성한다. 없으면 `HTTPRoute`가 워크로드 `Service`로 직결된다. `llmd-deploy-model`은 이제 기본으로 EPP를 활성화한다(`LLMD_SCHEDULER`).
 - **업데이트 직후 Ready는 이전 세대 값이다.** scheduler 추가 직후 Ready=True가 즉시 반환되었다.
   `metadata.generation == status.observedGeneration`을 함께 확인한다.
-- **MaaS 경로의 버전 차이.** 3.5는 DSC `aigateway.modelsAsAService`, Authorino listener TLS off,
+- **MaaS 경로의 버전 차이.** 3.5는 DSC `aigateway.modelsAsAService`, Authorino listener TLS on(2026-09-29 정정),
   `maas-default-gateway` 필수. `./harness.sh maas`가 버전을 판별하여 스크립트를 선택한다.
   MaaS 게이트웨이 호출은 `MaaSSubscription`이 없으면 403(`no matching subscription`)이다.
 - **같은 Gateway의 다중 InferencePool에서 ext_proc 오배정(OCP 4.22 Gateway, istio-pilot).** EPP가 활성화된

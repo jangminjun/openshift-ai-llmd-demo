@@ -8,8 +8,9 @@
 #
 # RHOAI 3.5 differences from the 3.4 path (verified on 3.5.1):
 #   - MaaS lives at spec.components.aigateway.modelsAsAService (not kserve.*).
-#   - Authorino listener TLS must be OFF (the generated EnvoyFilter connects
-#     in plaintext) -- no cert-manager Issuer/Certificate needed.
+#   - Authorino listener TLS must be ON: odh-model-controller generates a
+#     <gateway>-authn-ssl EnvoyFilter that dials Authorino over TLS. The
+#     service-CA serving cert is enough -- no cert-manager Issuer/Certificate.
 #   - AITenant expects a Gateway named exactly "maas-default-gateway".
 #   - Gateways use the cluster's router-certs-default (the placeholder
 #     "default-gateway-tls" secret is never created).
@@ -74,7 +75,15 @@ YAML
   done
 fi
 
-echo "== Step 2: Authorino instance (listener TLS off) =="
+echo "== Step 2: Authorino instance (listener TLS on, service-CA cert) =="
+# odh-model-controller's <gateway>-authn-ssl EnvoyFilter dials Authorino over TLS
+# (trusting service-ca.crt); a plaintext listener makes every authenticated call 500.
+oc annotate svc authorino-authorino-authorization -n kuadrant-system \
+  service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert --overwrite
+for _ in $(seq 1 12); do
+  oc get secret authorino-server-cert -n kuadrant-system &>/dev/null && break
+  sleep 5
+done
 oc apply -f - <<'YAML'
 apiVersion: operator.authorino.kuadrant.io/v1beta1
 kind: Authorino
@@ -86,7 +95,9 @@ spec:
   clusterWide: true
   listener:
     tls:
-      enabled: false
+      enabled: true
+      certSecretRef:
+        name: authorino-server-cert
   oidcServer:
     tls:
       enabled: false

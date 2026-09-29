@@ -5,9 +5,9 @@
 #   S25_REQUESTS (5)  S25_KEEP=true keeps tracing enabled afterwards
 NS="${LLMD_NAMESPACE:-llmd-test}"; N="${LLMD_NAME:-llmd-test}"
 TNS="${TRACING_NAMESPACE:-openshift-tempo}"
-EP="http://tempo-llmd-tracing-distributor.${TNS}.svc.cluster.local:4317"
+EP="http://tempo-llmd-tracing.${TNS}.svc.cluster.local:4317"
 require_free_gpu
-oc get svc tempo-llmd-tracing-query-frontend -n "$TNS" >/dev/null || die "Tempo not installed -- run 'harness.sh tracing'"
+oc get svc tempo-llmd-tracing-jaegerui -n "$TNS" >/dev/null || die "Tempo not installed -- run 'harness.sh tracing'"
 
 say "enable spec.tracing (sampler 1.0) -> $EP"
 oc patch llminferenceservice "$N" -n "$NS" --type=merge -p "{\"spec\":{\"tracing\":{\"exporter\":\"otlp\",\"exporterEndpoint\":\"$EP\",\"sampler\":\"parentbased_traceidratio\",\"samplerArg\":\"1.0\"}}}" >/dev/null
@@ -33,7 +33,7 @@ send 99999 "rejected"          # exceeds max_model_len -> 400
 
 say "spans (Tempo, port-forward)"
 PORT=$((20000 + RANDOM % 10000))
-oc port-forward -n "$TNS" svc/tempo-llmd-tracing-query-frontend "$PORT:16686" </dev/null >/dev/null 2>&1 &
+oc port-forward -n "$TNS" svc/tempo-llmd-tracing-jaegerui "$PORT:16686" </dev/null >/dev/null 2>&1 &
 PF=$!; sleep 5
 echo "  services: $(curl -s "http://localhost:$PORT/api/services")"
 sleep 10

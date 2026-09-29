@@ -14,7 +14,7 @@ PY=python3; python3 -c 'pass' 2>/dev/null || PY=python
 BENCH_NS="${LOADGEN_NAMESPACE:-llmd-bench}"
 MONITORING_NAMESPACE="${MONITORING_NAMESPACE:-gpu-monitoring}"
 LOADGEN_IMAGE="${LOADGEN_IMAGE:-registry.access.redhat.com/ubi9/python-311:latest}"
-LOADGEN_VARS="URL MODEL CONCURRENCY REQUESTS DURATION INTERVAL MAX_TOKENS PROMPT_MODE PREFIX_TOKENS DOCS DOC_OFFSET IMAGE_URLS HEADERS LABEL TIMEOUT TIMELINE"
+LOADGEN_VARS="URL MODEL CONCURRENCY REQUESTS DURATION INTERVAL MAX_TOKENS PROMPT_MODE PREFIX_TOKENS DOCS DOC_OFFSET IMAGE_URLS HEADERS LABEL TIMEOUT TIMELINE SESSIONS TURNS SESSION_HEADER PAUSE_AFTER_TURN PAUSE_SECONDS"
 
 say()  { printf '\n== %s ==\n' "$*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -199,5 +199,18 @@ require_free_gpu() {
   done
   [ "$f" -ge 1 ] || die "rolling update needs 1 idle GPU (free: $f). Scale out first:
   oc scale machineset <gpu-machineset> -n openshift-machine-api --replicas=N (+ MachineAutoscaler min/max)"
+}
+# require_token_limit <ns> <name> [min]: MaaS 429s silently turn a benchmark into a rate-limit test
+# (hit 2026-09-29: default 100k tokens/h rejected 548/600 requests of scenario 11).
+require_token_limit() {
+  local ns=$1 n=$2 min=${3:-50000000} lim
+  lim=$(oc get maassubscription -A -o json | "$PY" -c '
+import sys, json
+ns, n = sys.argv[1:3]
+ls = [l["limit"] for s in json.load(sys.stdin)["items"] for m in s["spec"].get("modelRefs", [])
+      if m.get("name") == n and m.get("namespace") == ns for l in m.get("tokenRateLimits", [])]
+print(max(ls) if ls else 0)' "$ns" "$n")
+  [ "$lim" -ge "$min" ] || die "MaaS token limit for $ns/$n is $lim/window (< $min). Raise it:
+  LLMD_NAMESPACE=$ns LLMD_NAME=$n MAAS_USERS=<users> MAAS_TOKEN_LIMIT=1000000000 ./harness.sh maas-register-model"
 }
 maas_key() { oc get secret loadgen-token -n "$BENCH_NS" -o jsonpath='{.data.token}' | base64 -d; }

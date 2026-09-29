@@ -30,13 +30,13 @@ flowchart LR
 ## 사전 조건
 
 - 대상 `LLMInferenceService`가 이미 Ready 상태 (`scenario12-llmd-failure-start`가 배포)
-- `monitoring-llmd-rhoai` 체크아웃, `oc login` 완료
+- `openshift-ai-llmd-demo` 체크아웃, `oc login` 완료
 - Thanos-querier 접근 가능 (모니터링 스택 활성화되어 있어야 함)
 
 ## 절차
 
 ```sh
-cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
+cd openshift-ai-llmd-demo/harness  # 리포 루트 기준
 
 # 1) 모델 배포 (1 replica)
 LLMD_NAMESPACE=llmd-scenario12 LLMD_NAME=llmd-failure-demo ./harness.sh scenario12-llmd-failure-start

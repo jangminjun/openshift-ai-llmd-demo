@@ -10,19 +10,17 @@
 노드에 자유롭게 흩어놓을 수 없다** — 보통 같은 노드 내 여러 GPU, 또는 고속 인터커넥트(NVLink/RDMA)로
 묶인 노드가 필요하다.
 
-## 왜 지금 못 하나
+## 현재 환경
 
-우리 클러스터(`openshift-aws-harness` 기본 구성)는 GPU가 **노드당 1장**(g5.2xlarge, g6.2xlarge)이다.
-TP를 검증하려면 다음 중 하나가 필요:
-
-1. 멀티GPU 인스턴스 1대 (예: `g5.12xlarge` = A10G 4장, 같은 호스트) — 가장 간단, RDMA 불필요
-2. RDMA/EFA 지원 인스턴스로 멀티노드 TP (예: `p4d.24xlarge` 계열) — 진짜 분산 TP지만 훨씬 비쌈
+현재 GPU 노드는 g5.24xlarge(A10G 24GB × 4, 단일 호스트)이므로 노드 내 TP(최대 4-way)는 추가 인프라 없이
+검증할 수 있다. 멀티노드 TP는 RDMA/EFA 지원 인스턴스(예: `p4d.24xlarge` 계열)가 필요하다.
 
 ## 사전 조건 (구현 시)
 
 ```sh
-# 멀티GPU 노드 추가 (harness에 이미 있는 gpu-machineset 재사용)
-GPU_INSTANCE_TYPE=g5.12xlarge GPU_REPLICAS=1 ./harness.sh gpu-machineset
+# 한 노드에 여유 GPU 4장 확보
+oc get nodes -l nvidia.com/gpu.present=true -o custom-columns='NODE:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
+oc scale machineset <gpu-machineset> -n openshift-machine-api --replicas=N
 ```
 
 - `LLMInferenceService`의 `spec.template.containers[].resources.limits."nvidia.com/gpu"`를 4로,
@@ -37,4 +35,4 @@ GPU_INSTANCE_TYPE=g5.12xlarge GPU_REPLICAS=1 ./harness.sh gpu-machineset
 
 ## 실측 결과
 
-_(미착수 — 멀티GPU 노드 배포 결정 후 진행)_
+_(미착수 — 하네스 구현 후 진행)_

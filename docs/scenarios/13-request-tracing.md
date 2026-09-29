@@ -1,7 +1,7 @@
 # 시나리오 13: 요청 추적 (Request Tracing)
 
 **모듈:** 분산 환경 활용 > 요청 추적
-**관련 컴포넌트:** vLLM(OTLP), TempoStack, Jaeger UI
+**관련 컴포넌트:** vLLM(OTLP), TempoMonolithic, Jaeger UI
 
 ## 목적
 
@@ -19,12 +19,12 @@ sequenceDiagram
     participant AU as Authorino
     participant EPP as EPP(라우터)
     participant VP as vLLM pod
-    participant TP as TempoStack
+    participant TP as TempoMonolithic
 
-    C->>MG: POST /maas-api/v1/tokens (oc 토큰)
-    MG-->>C: MaaS 토큰
+    C->>MG: POST /maas-api/v1/api-keys (oc 토큰)
+    MG-->>C: MaaS API 키 (sk-oai-*)
     C->>MG: POST /<ns>/<name>/v1/chat/completions (trace_id 생성)
-    MG->>AU: 토큰 검증
+    MG->>AU: API 키 검증
     AU-->>MG: OK
     MG->>EPP: 요청 전달 (trace_id 전파)
     EPP->>VP: pod 선택 후 전달 (trace_id 전파)
@@ -42,13 +42,13 @@ Tempo에서 조회 가능한지.** `scenario13-llmd-tracing-demo.sh`는 워크�
 
 ## 사전 조건
 
-- `./harness.sh tracing` 실행 완료 (COO + RHBO(OpenTelemetry) + Tempo Operator + TempoStack, MinIO 기반)
-- `monitoring-llmd-rhoai` 체크아웃, `oc login` 완료
+- `./harness.sh tracing` 실행 완료 (RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic, PV 저장)
+- `openshift-ai-llmd-demo` 체크아웃, `oc login` 완료
 
 ## 절차
 
 ```sh
-cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
+cd openshift-ai-llmd-demo/harness  # 리포 루트 기준
 
 # 0) 트레이싱 스택 설치 (한 번만)
 ./harness.sh tracing
@@ -57,7 +57,7 @@ cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
 LLMD_NAMESPACE=llmd-scenario13 LLMD_NAME=llmd-tracing-demo ./harness.sh scenario13-llmd-tracing-demo
 
 # 2) Jaeger UI로 확인 — `tracing`이 Route를 자동으로 만들어줌, 포트포워딩 불필요
-oc get route llmd-tracing-jaeger-ui -n openshift-tempo -o jsonpath='{.spec.host}'
+oc get route tempo-llmd-tracing-jaegerui -n openshift-tempo -o jsonpath='{.spec.host}'
 # 브라우저에서 https://<위 host>/ → 상단 Service 드롭다운에서 검색 (지금은 unknown_service로 나옴, 아래 참고)
 
 # 3) 정리
@@ -76,7 +76,7 @@ LLMD_NAMESPACE=llmd-scenario13 LLMD_NAME=llmd-tracing-demo ./harness.sh scenario
 
 - vLLM `--otlp-traces-endpoint` 플래그의 정확한 스킴(grpc:// 접두사 필요 여부)은 vLLM 버전에 따라 다를
   수 있음 — 이 저장소의 harness 스크립트(`llmd-deploy-model.sh` + `scenario13-llmd-tracing-demo.sh`)는
-  `grpc://tempo-llmd-tracing-distributor.<ns>.svc:4317`로 시도하며, 실제 실행 시 트레이스가 안 보이면
+  `grpc://tempo-llmd-tracing.<ns>.svc:4317`로 시도하며, 실제 실행 시 트레이스가 안 보이면
   vLLM 컨테이너 로그에서 OTLP 익스포터 관련 에러를 먼저 확인할 것.
 
 ## 실측 결과 (2026-09-08, myocp/sandbox3790, Qwen2.5-7B-Instruct)

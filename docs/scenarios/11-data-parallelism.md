@@ -1,108 +1,116 @@
-# 시나리오 11: 데이터 병렬화 (Data Parallelism)
+# 시나리오 11: 데이터 병렬화와 캐시 인지 라우팅
 
 **모듈:** 분산 환경 활용 > 병렬화 전략
-**관련 컴포넌트:** `LLMInferenceService`(replicas), EPP(라우터), Thanos-querier
+**관련 컴포넌트:** `LLMInferenceService`(`spec.replicas`), EPP(`prefix-cache-scorer`, `session-affinity-*`), MaaS Gateway
 
 ## 목적
 
-llm-d(RHOAI `LLMInferenceService`)에서 모델을 여러 replica로 복제했을 때, EPP가 실제로 요청을
-분산시키고 **처리량(throughput)이 replica 수에 비례해 늘어나는지**를 실측으로 확인한다. DP는 우리
-클러스터(GPU 노드 여러 개, 각 1장)에서 추가 리소스 없이 바로 검증 가능한 병렬화 전략이다.
+LLM 서빙의 데이터 병렬화(DP)는 모델 전체를 GPU마다 복제하고 요청을 나누어 처리하는 방식이다. 구조상
+수평 확장과 같으나, 각 복제본의 KV 캐시는 공유되지 않는다. 따라서 캐시를 인지하지 않는 분배는 같은
+대화의 요청을 여러 pod로 흩어 prefix 캐시 적중률을 낮추고, 모든 pod가 같은 prefix를 중복 보관하게 하여
+실효 캐시 용량을 1/N로 줄인다.
 
-## 요청 흐름 (MaaS 경유)
+본 시나리오는 다음 두 가지를 검증한다.
 
-```mermaid
-flowchart LR
-    C["클라이언트"] -->|"1. oc 토큰으로\nMaaS API 토큰 발급\nPOST /maas-api/v1/tokens"| MG
-    C -->|"2. POST /<ns>/<name>/v1/chat/completions\n(Bearer: MaaS 토큰)"| MG["MaaS Gateway\n(openshift-ai-inference)"]
-    MG --> AU["Authorino\nAuthPolicy로 토큰 검증"]
-    AU --> LI["Limitador\n(레이트리밋, 설정된 경우)"]
-    LI --> RT["HTTPRoute\n(InferencePool 또는 Service로 전달)"]
-    RT --> EPP["EPP\n(라우터/스케줄러)"]
-    EPP -->|"3. 부하가 가장 적은 pod 선택"| P1["vLLM pod #1"]
-    EPP --> P2["vLLM pod #2"]
-    EPP --> P3["vLLM pod #3\n(replica 3개일 때)"]
-```
+1. **확장 효과.** replica 1(before) 대비 replica 2(after)의 처리량과 지연.
+2. **분배 방식의 효과.** 같은 replica 2에서 캐시를 모르는 분배와 llm-d의 캐시 인지 분배의 차이.
 
-**이 시나리오에서 실제로 검증하는 지점: 3번 — EPP가 replica 1개일 때와 N개일 때 요청을 실제로
-분산시키는지, 그래서 aggregate 처리량이 늘어나는지.** 1~2번(MaaS 토큰 발급, Authorino/Limitador)은
-실제 운영 환경의 진입 경로이지만, `scenario11-llmd-dp-load.sh`는 자동화 단순화를 위해 클러스터 내부에서
-워크로드 Service로 직접 요청을 보낸다(MaaS 게이트웨이를 거치지 않음) — 즉 위 그림의 EPP 이후 구간만
-실측한다. MaaS 토큰 발급부터 전체를 거치게 하려면 절차의 `curl` 대상을
-`https://maas.<domain>/<ns>/<name>/v1/chat/completions` + `Authorization: Bearer <MaaS 토큰>`으로 바꾸면 된다.
+## 실험 설계
+
+| 조건 | replica | 분배 경로 | 분배 기준 |
+|---|---|---|---|
+| A | 1 | MaaS Gateway → EPP(기본) | — (before) |
+| B | 2 | 워크로드 `Service` 직접 호출 | 연결 단위 부하 분산(캐시 비인지) |
+| C | 2 | MaaS Gateway → EPP(기본) | prefix 캐시·대기열·KV 사용률 점수 합산 |
+| D | 2 | C + `session-affinity-scorer` | 세션 토큰의 pod에 가산점(부하 균형 유지) |
+| E | 2 | C + `session-affinity-filter` | 세션 토큰의 pod로 강제(hard sticky) |
+| F0 / F1 / F2 | 2 | C / C / D, 1턴 후 3분 정지 | F1·F2는 정지 중 EPP pod를 삭제(재시작)하여 prefix 인덱스 제거 |
+
+- **부하:** 다중 턴 대화 200개. 대화마다 약 3,000토큰의 고유 문서를 system 메시지로 두고, 3턴 동안 이전
+  질의·응답을 모두 재전송한다(`PROMPT_MODE=multi-turn`). 동시 대화 16, 응답 32토큰.
+- **포화 조건:** `llmd-test`는 `--max-num-seqs=4`이므로 동시 16에서 replica 1은 포화된다.
+- **캐시 압박:** 전체 문맥 약 70만 토큰이 pod당 KV 캐시(약 58만 토큰, vLLM 로그 `GPU KV cache size`)를 넘는다.
+- **세션 토큰:** EPP의 session affinity 플러그인이 응답 헤더 `x-session-token`을 발급하고, 부하 생성기가
+  다음 턴에 이를 되돌려 보낸다.
+- **공정성:** 조건마다 새 문서 범위(`DOC_OFFSET`)를 사용해 이전 조건의 캐시가 결과에 섞이지 않게 한다.
+  B는 MaaS 인증 구간을 거치지 않으므로 인증 지연(수 ms)만큼 유리하다.
+- **EPP 재시작(F):** 부하 생성기가 1턴 후 정지하고(`PAUSE_AFTER_TURN=1`), 하네스가 정지 중 지표를 기록한 뒤
+  EPP pod를 삭제한다. vLLM의 KV 캐시와 클라이언트의 세션 토큰은 유지되므로 2~3턴 적중률로 영향을 본다.
+
+## 측정 지표
+
+| 지표 | 출처 | 해석 |
+|---|---|---|
+| 처리량(`rps`), TTFT p50/p95 | 부하 생성기(클라이언트 집계) | 확장·분배 효과 |
+| TTFT p50 `turn1` / `later` | 부하 생성기 | 첫 턴은 콜드 문서, 이후 턴은 캐시 재사용 여부를 반영 |
+| prefix 캐시 적중률 | `kserve_vllm:prefix_cache_hits_total / prefix_cache_queries_total` | 분배의 캐시 인지 정도 |
+| pod별 요청 분배(`split`) | `kserve_vllm:request_success_total` (pod별) | 부하 편중 |
+| `session_token_resp` | 응답 헤더 수 | session affinity 경로 동작 확인 |
 
 ## 사전 조건
 
-- GPU 노드가 목표 replica 수만큼 Ready 상태 (`oc get nodes -l nvidia.com/gpu.present=true`)
-- RHOAI 3.4+, MaaS 불필요 (직접 Service 접근으로 테스트)
-- `monitoring-llmd-rhoai` 체크아웃, `oc login` 완료
+- RHOAI 3.5.1, `llmd-test` Ready(EPP 활성, `maas-default-gateway`), 여유 GPU 1장(replica 1→2 전환)
+- Gateway의 EPP 활성 모델은 `llmd-test` 하나(`require_single_epp`)
+- MaaS 토큰 한도 5,000만 토큰/시간 이상(`require_token_limit`). 기본값 10만은 429를 유발한다.
+  ```sh
+  LLMD_NAMESPACE=llmd-test LLMD_NAME=llmd-test MAAS_USERS=<user>,system:serviceaccount:llmd-bench:loadgen \
+    MAAS_TOKEN_LIMIT=1000000000 ./harness.sh maas-register-model
+  ./harness.sh maas-api-key
+  ```
 
 ## 절차
 
 ```sh
-cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
-
-# 1) 1 replica로 배포 (baseline)
-LLMD_NAMESPACE=llmd-scenario11 LLMD_NAME=llmd-dp-demo ./harness.sh scenario11-llmd-dp-start
-
-# 2) baseline 처리량 측정 (concurrency=8, 90초 부하)
-LLMD_NAMESPACE=llmd-scenario11 LLMD_NAME=llmd-dp-demo ./harness.sh scenario11-llmd-dp-load
-
-# 3) N replica로 스케일 (N = GPU 노드 수, 이 클러스터는 g5.2xlarge가 2개라 N=2로 실측함)
-LLMD_NAMESPACE=llmd-scenario11 LLMD_NAME=llmd-dp-demo LLMD_REPLICAS=2 ./harness.sh scenario11-llmd-dp-scale
-
-# 4) 스케일 후 처리량 재측정 (같은 부하로)
-LLMD_NAMESPACE=llmd-scenario11 LLMD_NAME=llmd-dp-demo ./harness.sh scenario11-llmd-dp-load
-
-# 5) 정리
-LLMD_NAMESPACE=llmd-scenario11 LLMD_NAME=llmd-dp-demo ./harness.sh scenario11-llmd-dp-stop
+cd openshift-ai-llmd-demo/harness
+./harness.sh scenario11-llmd-dp-affinity                  # A~E 순차 실행, 종료 시 replica·EPP 설정 원복
+S11_ARMS="F0 F1 F2" ./harness.sh scenario11-llmd-dp-affinity   # EPP 재시작 영향
+S11_ARMS="B C" S11_SESSIONS=100 ./harness.sh scenario11-llmd-dp-affinity   # 일부 조건, 규모 조정
 ```
 
-부하 강도는 `CONCURRENCY`(기본 8), `DURATION`(기본 90초)로 조절 가능.
+조정 변수: `S11_SESSIONS`(200), `S11_TURNS`(3), `S11_PREFIX_TOKENS`(3000), `S11_CONCURRENCY`(16),
+`S11_MAX_TOKENS`(32), `S11_AFFINITY_WEIGHT`(3), `S11_PAUSE`(180), `S11_ARMS`("A B C D E").
+
+분배와 캐시 상태는 다음으로 확인한다.
+
+```sh
+oc get pods -n llmd-test -l app.kubernetes.io/component=llminferenceservice-workload -o wide
+oc get llminferenceservice llmd-test -n llmd-test -o jsonpath='{.spec.router.scheduler.config.inline}'
+QUERY='sum by (pod)(rate(kserve_vllm:prefix_cache_hits_total{namespace="llmd-test"}[5m])) / sum by (pod)(rate(kserve_vllm:prefix_cache_queries_total{namespace="llmd-test"}[5m]))' \
+  ./harness.sh llmd-promql
+```
 
 ## 예상 결과
 
-- 1 replica: 처리량이 해당 GPU 1장의 최대 처리 능력에서 포화(saturate)됨 — `kserve_vllm:num_requests_waiting`가
-  0보다 커지기 시작.
-- N replica: EPP가 요청을 여러 workload pod로 분산시켜 **aggregate 처리량이 대략 N배 가까이 증가**해야
-  함 (완벽한 선형 스케일링은 아닐 수 있음 — 라우팅 오버헤드, 캐시 지역성 손실 등으로 다소 낮을 수 있음).
-- 각 pod의 `kserve_http_requests_total` 증가량이 고르게 분산되는지도 확인 가치 있음 (EPP가 특정 pod로
-  쏠리지 않는지).
+- **A → C:** 포화 구간이므로 처리량이 약 2배로 증가한다.
+- **B vs C:** 처리량은 비슷하나, B는 대화의 턴이 두 pod로 흩어져 적중률이 낮고 `later` TTFT가 길다.
+- **C vs D:** 대화 이력이 다음 턴의 prefix가 되므로 C만으로도 대부분 같은 pod로 향한다. D는 캐시가
+  밀려난(eviction) 경우와 점수 동률에서 고정성을 보강한다.
+- **E:** 적중률은 가장 높을 수 있으나 세션이 몰린 pod의 대기열이 길어져 TTFT p95가 악화될 수 있다.
 
-## 실측 결과 (2026-09-08, myocp/sandbox3790, Qwen2.5-7B-Instruct, concurrency=8, 90초)
+## 실측 결과 (2026-09-29, RHOAI 3.5.1, Qwen2.5-1.5B-Instruct, A10G, `--max-num-seqs=4`)
 
-**실행 자체는 성공(EPP가 정상적으로 2개 pod로 분산) — 그런데 처리량은 예상대로 배로 안 늘었다.**
+200개 대화 × 3턴, 동시 16, 조건별 1회. 문서 본문은 단일 단어 반복이었다(부하 생성기 결함, 수정됨). 문서 번호가
+선두에 있어 prefix는 대화별로 고유하므로 캐시·분배 결과는 유효하다.
 
-| replica 수 | aggregate 처리량 |
-|---|---|
-| 1 | 3.99 req/s |
-| 2 | 4.38 req/s (**+10%뿐**) |
+| 조건 | 처리량 (req/s) | TTFT p50 / p95 (s) | 캐시 적중률 | pod 분배 |
+|---|---|---|---|---|
+| A: r1, EPP | 5.98 | 1.98 / 2.95 | 66.3% | 593 |
+| B: r2, `Service` | 9.25 (×1.55) | 1.00 / 2.11 | 41.2% | 296 : 304 |
+| C: r2, EPP | **11.92 (×1.99)** | **0.72 / 1.14** | **66.7%** | 306 : 294 |
+| D: C + affinity scorer | 11.99 | 0.71 / 1.26 | 66.6% | 298 : 300 |
+| E: C + affinity filter | 11.91 | 0.73 / 1.17 | 66.6% | 305 : 294 |
 
-**왜 2배가 아니었나:** `CONCURRENCY=8`을 고정한 채 replica만 1→2로 늘렸다. 즉 클라이언트가 동시에 보내는
-요청 총량은 그대로 8개인데, 이게 이미 **replica 1개가 큐잉 없이 처리할 수 있는 수준**이었다면(=1개
-GPU가 아직 포화 상태가 아니었다면), replica를 늘려도 각 pod가 요청을 좀 더 적게 나눠 받을 뿐 총
-처리량은 크게 안 늘어난다 — "동시요청 8개를 pod 2개가 나눠 처리 = 절반씩" 정도의 효과만 남는다.
-**교훈: DP 스케일링을 제대로 보려면 replica 수와 함께 부하(concurrency)도 비례해서 늘려야 한다** —
-예를 들어 1 replica일 때 concurrency=8로 이미 포화시킨 뒤, 2 replica일 때는 concurrency=16으로 다시
-포화시켜서 비교해야 진짜 스케일링 효과가 보인다. (다음 실행 후보로 남겨둠 — `CONCURRENCY` 환경변수로
-바로 조절 가능.)
+EPP 재시작(1턴 후) 영향. 적중률·TTFT는 2~3턴 기준이다.
 
-- EPP가 실제로 두 pod 모두에 트래픽을 분산시키는 것 자체는 확인됨(2번째 replica가 스케줄된 뒤 aggregate
-  처리량이 실제로 변화함 — 라우팅이 죽은 pod에만 몰리지 않았다는 방증).
+| 조건 | 캐시 적중률 | TTFT p50 (s) | 처리량 (req/s) |
+|---|---|---|---|
+| F0: EPP, 재시작 없음 | 99.3% | 0.47 | 11.90 |
+| F1: EPP, 재시작 | 72.3% | 0.67 | 10.06 |
+| F2: EPP + affinity scorer, 재시작 | **94.2%** | **0.54** | 11.39 |
 
-## 겪은 이슈
-
-- GPU가 노드당 1장뿐이라, 다른 시나리오(12)가 같은 `g5.2xlarge` GPU를 이미 점유하고 있으면 2번째
-  replica가 스케줄이 안 된다 (`Insufficient nvidia.com/gpu`) — 다른 시나리오의 모델을 먼저 정리
-  (`scenario12-llmd-failure-stop`)해야 했다. 여러 시나리오를 동시에 돌릴 계획이면 시나리오 수만큼
-  GPU 노드를 미리 확보해둘 것.
-- 부하 스크립트의 `"model":"placeholder"` 하드코딩 버그(다른 시나리오와 동일) — 실제 모델명을
-  `LLMInferenceService`에서 조회하도록 수정.
-
-## 현재 상태 (2026-09-08)
-
-측정 완료 후 GPU를 다른 시나리오(14)에 돌려주기 위해 **1 replica로 다시 축소**해둠
-(`LLMD_REPLICAS=1 ./harness.sh scenario11-llmd-dp-scale`). `llmd-scenario11/llmd-dp-demo`는 계속 떠
-있어서 Grafana `llm-d Observability` 대시보드에서 `llmd-scenario11`을 선택하면 바로 확인 가능
-(`LLMD_NAMESPACE=llmd-scenario11 ./harness.sh llmd-monitoring` 적용됨). 정리하려면
-`./harness.sh scenario11-llmd-dp-stop`.
+- **캐시 인지 분배(C)만 확장 효과를 온전히 얻는다.** 처리량 ×1.99, 적중률은 이론 상한(66.7%).
+- **캐시 비인지 분배(B)는 턴이 흩어져 적중률이 이론값(41.7%)까지 떨어지고 처리량은 ×1.55에 그친다.**
+- **session affinity(D, E)는 평상시 추가 이득이 없다.** 대화 이력이 곧 prefix이므로 C로 충분하다.
+- **EPP 재시작은 캐시 재사용의 약 1/4을 잃게 한다(F1).** prefix 인덱스가 EPP 메모리에만 있기 때문이다.
+- **session affinity는 EPP 재시작 시 가치가 있다(F2).** 세션 토큰이 클라이언트에 있어 적중률 94.2%를 유지한다.
+- MaaS 경로의 500(0.2~1.2%)은 Authorino 인증 200ms 기한 초과이며 모델과 무관하다([lessonlearn.md](../../lessonlearn.md)).

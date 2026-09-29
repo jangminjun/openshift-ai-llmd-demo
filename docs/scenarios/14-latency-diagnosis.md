@@ -40,7 +40,7 @@ Gateway 쪽 메트릭/트레이스로 봐야 함 — 시나리오 13의 trace를
 ## 절차
 
 ```sh
-cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
+cd openshift-ai-llmd-demo/harness  # 리포 루트 기준
 
 # 1) 모델 배포
 LLMD_NAMESPACE=llmd-scenario14 LLMD_NAME=llmd-latency-demo ./harness.sh scenario14-llmd-latency-start

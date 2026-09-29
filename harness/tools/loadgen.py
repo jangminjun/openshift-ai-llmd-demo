@@ -14,12 +14,19 @@ Env:
   DURATION     seconds to run when REQUESTS=0 (default 60)
   INTERVAL     per-worker pause between requests in seconds (default 0)
   MAX_TOKENS   (default 64)
-  PROMPT_MODE  short | shared-prefix | multi-prefix | unique-long | image (default short)
+  PROMPT_MODE  short | shared-prefix | multi-prefix | unique-long | image | multi-turn (default short)
   DOCS         number of distinct documents for multi-prefix (default 100)
   DOC_OFFSET   first document id (use a new range per run to start with cold caches)
   PREFIX_TOKENS approx. size of shared/unique prompt body (default 2000)
   IMAGE_URLS   comma-separated image URLs/data-URLs for PROMPT_MODE=image; a single URL containing
                "{n}" is a template filled with DOC_OFFSET + random(DOCS) (e.g. seeded image service)
+  SESSIONS     multi-turn: number of conversations, each with its own PREFIX_TOKENS document (default 64)
+  TURNS        multi-turn: user turns per conversation; history (incl. answers) is resent (default 3)
+  SESSION_HEADER multi-turn: response header echoed back on later turns (default x-session-token,
+               set by the EPP session-affinity plugins)
+  PAUSE_AFTER_TURN multi-turn: run turns [0, N) of every conversation, print "PHASE_PAUSE", sleep
+               PAUSE_SECONDS (default 180), then run the remaining turns; lets the caller change the
+               cluster (e.g. restart the EPP) between phases. Pause time is excluded from wall_s/rps.
   HEADERS      JSON object of extra request headers
   LABEL        free-text label copied into the summary
   TIMEOUT      per-request timeout seconds (default 300)
@@ -37,11 +44,16 @@ MODE = E("PROMPT_MODE", "short"); PREFIX = int(E("PREFIX_TOKENS", "2000"))
 DOCS = int(E("DOCS", "100")); DOC_OFFSET = int(E("DOC_OFFSET", "0"))
 IMAGES = [u for u in E("IMAGE_URLS", "").split(",") if u]
 HDRS = json.loads(E("HEADERS", "{}")); LABEL = E("LABEL", ""); TIMEOUT = float(E("TIMEOUT", "300"))
+SESSIONS = int(E("SESSIONS", "64")); TURNS = int(E("TURNS", "3")); SESSION_HEADER = E("SESSION_HEADER", "x-session-token")
+PAUSE_AFTER = int(E("PAUSE_AFTER_TURN", "0")); PAUSE_S = float(E("PAUSE_SECONDS", "180"))
 
 u = urllib.parse.urlparse(URL)
 CTX = ssl._create_unverified_context()
 WORDS = "cluster gateway router scheduler cache token latency replica model pod node queue policy".split()
-SHARED = " ".join(random.Random(42).choice(WORDS) for _ in range(PREFIX))
+def words(seed):  # one RNG per text: a fresh Random(seed) per word repeats a single word
+    rng = random.Random(seed); return " ".join(rng.choice(WORDS) for _ in range(PREFIX))
+
+SHARED = words(42)
 QUESTIONS = ["Summarize the text.", "List three keywords.", "What is the main topic?", "Give a title.",
              "Count repeated words.", "Write one sentence about it.", "Is it technical?", "Translate the first line."]
 
@@ -51,7 +63,7 @@ def messages(i):
                 {"role": "user", "content": QUESTIONS[i % len(QUESTIONS)]}]
     if MODE == "multi-prefix":  # random doc out of DOCS, each a stable PREFIX_TOKENS-long text
         d = DOC_OFFSET + random.randrange(DOCS)
-        text = " ".join(random.Random(d).choice(WORDS) for _ in range(PREFIX))
+        text = words(d)
         return [{"role": "system", "content": "Document %d: %s" % (d, text)},
                 {"role": "user", "content": random.choice(QUESTIONS)}]
     if MODE == "unique-long":
@@ -69,18 +81,22 @@ def messages(i):
 results, lock = [], threading.Lock()
 counter = iter(range(10**9))
 
-def one(i):
-    body = json.dumps({"model": MODEL, "messages": messages(i), "max_tokens": MAXTOK, "stream": True,
+def doc(d):  # stable PREFIX_TOKENS-long document per id
+    return "Document %d: %s" % (d, words(d))
+
+def one(i, msgs=None, extra=None, turn=None):
+    """Send one streamed request; returns (answer text, response headers)."""
+    body = json.dumps({"model": MODEL, "messages": msgs or messages(i), "max_tokens": MAXTOK, "stream": True,
                        "stream_options": {"include_usage": True}})
-    h = {"Content-Type": "application/json", **HDRS}
+    h = {"Content-Type": "application/json", **HDRS, **(extra or {})}
     if TOKEN:
         h["Authorization"] = "Bearer " + TOKEN
-    t0 = time.time(); ttft = None; code = 0; toks = 0; err = ""
+    t0 = time.time(); ttft = None; code = 0; toks = 0; err = ""; text = []; rh = {}
     try:
         c = (http.client.HTTPSConnection(u.netloc, context=CTX, timeout=TIMEOUT) if u.scheme == "https"
              else http.client.HTTPConnection(u.netloc, timeout=TIMEOUT))
         c.request("POST", u.path, body, h)
-        r = c.getresponse(); code = r.status
+        r = c.getresponse(); code = r.status; rh = {k.lower(): v for k, v in r.getheaders()}
         if code != 200:
             err = r.read(300).decode(errors="replace")
         else:
@@ -92,17 +108,39 @@ def one(i):
                 if data == b"[DONE]":
                     break
                 d = json.loads(data)
-                if ttft is None and d.get("choices") and d["choices"][0].get("delta", {}).get("content"):
-                    ttft = time.time() - t0
+                piece = d["choices"][0].get("delta", {}).get("content") if d.get("choices") else None
+                if piece:
+                    text.append(piece)
+                    if ttft is None:
+                        ttft = time.time() - t0
                 if d.get("usage"):
                     toks = d["usage"].get("completion_tokens", 0)
         c.close()
     except Exception as ex:  # connection-level failures count as code 0
         err = type(ex).__name__ + ": " + str(ex)[:200]
     with lock:
-        results.append({"code": code, "ttft": ttft, "e2e": time.time() - t0, "toks": toks, "err": err, "t": t0})
+        results.append({"code": code, "ttft": ttft, "e2e": time.time() - t0, "toks": toks, "err": err, "t": t0,
+                        "turn": turn, "stoken": SESSION_HEADER in rh})
+    return "".join(text), rh
+
+sessions = iter(range(SESSIONS)); state = {}; turn_range = (0, TURNS)
+
+def conversation(sid):  # user turns over one growing history; echoes the session header
+    st = state.setdefault(sid, {"hist": [{"role": "system", "content": doc(DOC_OFFSET + sid)}], "extra": {}})
+    for t in range(*turn_range):
+        st["hist"].append({"role": "user", "content": QUESTIONS[(sid + t) % len(QUESTIONS)]})
+        answer, rh = one(0, st["hist"], st["extra"], t)
+        st["hist"].append({"role": "assistant", "content": answer or "(no answer)"})
+        if rh.get(SESSION_HEADER):
+            st["extra"] = {SESSION_HEADER: rh[SESSION_HEADER]}
+        if INTERVAL:
+            time.sleep(INTERVAL)
 
 def worker(deadline):
+    if MODE == "multi-turn":
+        for sid in sessions:
+            conversation(sid)
+        return
     while True:
         i = next(counter)
         if (REQS and i >= REQS) or (not REQS and time.time() >= deadline):
@@ -115,10 +153,18 @@ def pct(xs, p):
     xs = sorted(x for x in xs if x is not None)
     return round(xs[min(len(xs) - 1, int(len(xs) * p))], 3) if xs else None
 
-start = time.time()
-threads = [threading.Thread(target=worker, args=(start + DUR,)) for _ in range(CONC)]
-[t.start() for t in threads]; [t.join() for t in threads]
-wall = time.time() - start
+def run_threads():
+    threads = [threading.Thread(target=worker, args=(start + DUR,)) for _ in range(CONC)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+
+start = time.time(); paused = 0.0
+if MODE == "multi-turn" and 0 < PAUSE_AFTER < TURNS:
+    turn_range = (0, PAUSE_AFTER); run_threads()
+    print("PHASE_PAUSE after turn %d, sleeping %ds" % (PAUSE_AFTER, PAUSE_S), flush=True)
+    time.sleep(PAUSE_S); paused = PAUSE_S
+    sessions = iter(range(SESSIONS)); turn_range = (PAUSE_AFTER, TURNS)
+run_threads()
+wall = time.time() - start - paused
 ok = [r for r in results if r["code"] == 200]
 codes = {}
 for r in results:
@@ -129,6 +175,10 @@ summary = {"label": LABEL, "mode": MODE, "concurrency": CONC, "n": len(results),
            "ttft_p50": pct([r["ttft"] for r in ok], .5), "ttft_p95": pct([r["ttft"] for r in ok], .95),
            "e2e_p50": pct([r["e2e"] for r in ok], .5), "e2e_p95": pct([r["e2e"] for r in ok], .95),
            "errors": sorted({r["err"] for r in results if r["err"]})[:3]}
+if MODE == "multi-turn":  # first turn = cold document, later turns = history already cached somewhere
+    summary["ttft_p50_turn1"] = pct([r["ttft"] for r in ok if r["turn"] == 0], .5)
+    summary["ttft_p50_later"] = pct([r["ttft"] for r in ok if r["turn"]], .5)
+    summary["session_token_resp"] = sum(r["stoken"] for r in ok)
 if E("TIMELINE"):
     summary["timeline"] = [[round(r["t"] - start, 1), r["code"]] for r in sorted(results, key=lambda r: r["t"])]
 print("SUMMARY " + json.dumps(summary))

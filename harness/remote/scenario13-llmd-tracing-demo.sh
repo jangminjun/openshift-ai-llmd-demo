@@ -15,8 +15,8 @@ LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-scenario13}"
 LLMD_NAME="${LLMD_NAME:-llmd-tracing-demo}"
 TRACING_NAMESPACE="${TRACING_NAMESPACE:-openshift-tempo}"
 
-if ! oc get tempostack llmd-tracing -n "$TRACING_NAMESPACE" &>/dev/null; then
-  echo "TempoStack not found in $TRACING_NAMESPACE -- run 'harness.sh tracing' first." >&2
+if ! oc get tempomonolithic llmd-tracing -n "$TRACING_NAMESPACE" &>/dev/null; then
+  echo "TempoMonolithic not found in $TRACING_NAMESPACE -- run 'harness.sh tracing' first." >&2
   exit 1
 fi
 if ! oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" &>/dev/null; then
@@ -55,11 +55,10 @@ sleep 10
 
 echo ""
 echo "=== Traces should now be in Tempo. To view: ==="
-echo "oc port-forward -n $TRACING_NAMESPACE svc/tempo-llmd-tracing-query-frontend 16686:16686"
+echo "oc port-forward -n $TRACING_NAMESPACE svc/tempo-llmd-tracing-jaegerui 16686:16686"
 echo "then open http://localhost:16686 and search for service=$LLMD_NAME"
 echo ""
-echo "Or query the Tempo API directly for recent trace IDs:"
-echo "  oc exec -n $TRACING_NAMESPACE deploy/tempo-llmd-tracing-query-frontend -- \\"
-echo "    wget -qO- 'http://localhost:16686/api/traces?service=${LLMD_NAME}&limit=5'"
+echo "Or, with the port-forward running, query the Jaeger API for recent traces:"
+echo "  curl -s 'http://localhost:16686/api/traces?service=${LLMD_NAME}&limit=5'"
 
 oc delete pod llmd-tracing-client -n "$LLMD_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true

@@ -16,11 +16,12 @@ EP는 토큰마다 일부 expert만 활성화되지만(예: Qwen3.5-35B-A3B는 �
    Qwen3.6-35B-A3B 등)이 필요 — 전체 가중치가 크고(~35B), 이 harness가 아직 vLLM의 Qwen3.5/3.6
    아키텍처(hybrid Gated DeltaNet + Gated Attention) 호환성을 확인하지 못했다 (`llmd-deploy-model.sh`
    주석 참고).
-2. **GPU**: 시나리오 15(TP)와 마찬가지로 expert를 나눌 멀티GPU가 필요.
+2. **GPU**: expert를 나눌 멀티GPU가 필요하다. 현재 g5.24xlarge(A10G × 4, 총 96GB)는 FP8/INT4 양자화 없이는
+   35B급 전체 가중치 적재가 빠듯하다.
 
 ## 사전 조건 (구현 시)
 
-1. `docs/scenarios/qwen3.5-compat-check.md`(별도 작성 필요)로 RHOAI 3.4.4의 vLLM 빌드가 Qwen3.5/3.6을
+1. `docs/scenarios/qwen3.5-compat-check.md`(별도 작성 필요)로 RHOAI 3.5.1의 vLLM 빌드가 Qwen3.5/3.6을
    로드할 수 있는지 먼저 확인 — 실패하면 vLLM 버전이 해당 아키텍처를 지원할 때까지 이 시나리오는 보류.
 2. 멀티GPU 노드 (시나리오 15와 동일한 방식)
 3. vLLM MoE 관련 인자 조사 (expert-parallel-size 등 — vLLM 버전에 따라 플래그명이 다를 수 있어 확인 필요)

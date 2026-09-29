@@ -46,8 +46,8 @@ flowchart LR
     GW -->|HTTPRoute| IP["InferencePool"]
     IP -->|ext_proc| EPP["EPP\nScorer 4종 · Flow Control\n· token-producer"]
     EPP -.->|render| TK["tokenizer\n(vllm launch render)"]
-    EPP -->|선택된 endpoint| V["vLLM pod × N\n(T4 GPU)"]
-    V -.->|OTLP| TEMPO["TempoStack"]
+    EPP -->|선택된 endpoint| V["vLLM pod × N\n(A10G GPU)"]
+    V -.->|OTLP| TEMPO["TempoMonolithic"]
     EPP -.->|OTLP| TEMPO
     V -->|kserve_vllm:*| UWM["UWM Prometheus"]
     EPP -->|llm_d_epp_*| UWM
@@ -64,16 +64,20 @@ flowchart LR
 - **EPP 인라인 설정은 전체 교체한다.** merge 패치는 이전 키를 남겨 CrashLoop를 유발하고, 설정 제거는
   기본값으로 복귀시키지 않는다.
 - **롤링 재기동에는 여유 GPU 1장이 필요하다**(maxSurge 1, maxUnavailable 0).
+- **Authorino listener TLS는 켜야 한다.** odh-model-controller의 `<gateway>-authn-ssl` EnvoyFilter가 TLS로
+  접속하므로, TLS off이면 인증이 필요한 모든 MaaS 요청이 500을 반환한다(`maas.sh`에 반영).
 
 ## 시나리오
 
-- **11~16 (분산 운영)**: RHOAI 3.4.4, Qwen2.5-7B-Instruct, g5.2xlarge(A10G), 워크로드 Service 직접 호출로 측정.
+- **11 (데이터 병렬화)**: RHOAI 3.5.1, `llmd-test`(Qwen2.5-1.5B-Instruct), g5.24xlarge(A10G), MaaS Gateway 경유.
+- **12~16 (분산 운영)**: 최초 측정은 RHOAI 3.4.4, Qwen2.5-7B-Instruct, g5.2xlarge(A10G). RHOAI 3.5.1에서는
+  EPP 없이 배포하여 워크로드 Service를 직접 호출하며, `llmd-test`와 같은 Gateway에 공존한다.
 - **21~29 (llm-d GA 기능)**: RHOAI 3.5.1, Qwen2.5-1.5B-Instruct(24번은 Qwen2.5-VL-3B-Instruct), g4dn.xlarge(T4) × 2,
   MaaS Gateway 경유로 측정. 개요와 공통 전제: [llmd-ga-overview.md](docs/scenarios/llmd-ga-overview.md).
 
 | # | 기능 | 검증 내용 | 실측 결과 | 하네스 명령 |
 |---|---|---|---|---|
-| 11 | [데이터 병렬화(DP)](docs/scenarios/11-data-parallelism.md) | replica 1 vs N의 처리량 확장 | 고정 부하에서는 +10%에 그침. 부하를 함께 늘려야 확장 효과가 나타남 | `scenario11-llmd-dp-{start,scale,load,stop}` |
+| 11 | [데이터 병렬화와 캐시 인지 라우팅](docs/scenarios/11-data-parallelism.md) | replica 1 vs 2, 분배 방식(`Service`/EPP/session affinity)별 처리량·캐시 적중률 | replica 2에서 EPP 분배는 처리량 ×1.99·적중률 66.7%(이론 상한), `Service` 분배는 ×1.55·41.2%. session affinity는 평상시 이득 없으나 EPP 재시작 시 적중률 94.2% 유지(기본 72.3%) | `scenario11-llmd-dp-affinity` |
 | 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | 워크로드 pod 장애 시 실패율과 복구 시간 | 복구 384 s(모델 재다운로드 지배). 연결 실패는 서버 메트릭에 집계되지 않음 | `scenario12-llmd-failure-{start,trigger,stop}` |
 | 13 | [요청 추적](docs/scenarios/13-request-tracing.md) | vLLM 인자 방식 OTLP 트레이싱 | 부분 실측(startup span). 요청 단위 trace는 시나리오 25(`spec.tracing`)에서 완료 | `scenario13-llmd-tracing-{demo,stop}` |
 | 14 | [지연 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 병목 구분 | decode가 단독 병목(9.6 s / 4.9 s), 재검증 시 재현 | `scenario14-llmd-latency-{start,diagnose,stop}` |
@@ -94,8 +98,8 @@ flowchart LR
 ## 사전 조건
 
 - OpenShift 4.22, RHOAI 3.5.1(`DataScienceCluster` Ready, KServe Managed), NVIDIA GPU Operator
-- GPU 노드: 데모 1회당 T4 2장(21~28은 `llmd-test` replica 2, 29는 v1/v2). 롤링 재기동 시나리오(23·25·26)는
-  여유 GPU 1장 추가
+- GPU 노드: 현재 구성은 g5.24xlarge(A10G 24GB × 4). 21~28은 `llmd-test` replica 2, 29는 v1/v2로 GPU 2장을
+  사용하며, 롤링 재기동 시나리오(23·25·26)는 여유 GPU 1장을 추가로 요구한다
 - `oc login`(cluster-admin). bastion은 선택 사항이다(`HARNESS_EXEC=auto`는 로컬 `oc` 세션을 사용)
 - 클러스터 접속 정보는 `AGENT.md`(gitignore)에 둔다: `cp AGENT.md.example AGENT.md`
 
@@ -156,9 +160,9 @@ URL은 클러스터마다 다르며 `AGENT.md`에 기록한다.
   oc get route -n gpu-monitoring
   oc get secret gpu-grafana-admin-credentials -n gpu-monitoring -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d
   ```
-- **Jaeger UI(Tempo)** — Tempo operator가 관리하는 Route, OpenShift OAuth 로그인. 시나리오 25의 trace ID로 조회한다.
+- **Jaeger UI(Tempo)** — Tempo operator가 관리하는 Route. 시나리오 25의 trace ID로 조회한다.
   ```sh
-  oc get route tempo-llmd-tracing-query-frontend -n openshift-tempo
+  oc get route tempo-llmd-tracing-jaegerui -n openshift-tempo
   ```
 - **MaaS 모델 목록** — API 키로 등록 모델을 확인한다.
   ```sh
