@@ -3,21 +3,44 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 4,
   "refresh": "15s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
       "title": "TTFT (p95)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
-        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null },
-          { "color": "red", "value": 2 }
-        ] } },
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
         "overrides": []
       },
       "targets": [
@@ -32,10 +55,20 @@
       "id": 2,
       "title": "Throughput (req/s)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
-        "defaults": { "unit": "reqps" },
+        "defaults": {
+          "unit": "reqps"
+        },
         "overrides": []
       },
       "targets": [
@@ -50,13 +83,37 @@
       "id": 3,
       "title": "Error Rate",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "fieldConfig": {
-        "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [
-          { "color": "green", "value": null },
-          { "color": "red", "value": 0.05 }
-        ] } },
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          },
+          "custom": {
+            "axisSoftMax": 0.05
+          },
+          "min": 0
+        },
         "overrides": []
       },
       "targets": [
@@ -71,10 +128,20 @@
       "id": 4,
       "title": "KV Cache Usage",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "fieldConfig": {
-        "defaults": { "unit": "percentunit" },
+        "defaults": {
+          "unit": "percentunit"
+        },
         "overrides": []
       },
       "targets": [
@@ -82,6 +149,291 @@
           "expr": "kserve_vllm:kv_cache_usage_perc{namespace=\"$namespace\"}",
           "legendFormat": "{{pod}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Latency breakdown per request (mean)",
+      "description": "Mean seconds per request spent waiting for a slot (queue), processing the prompt (prefill) and generating tokens (decode). The tallest band is the bottleneck.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "queue"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "prefill"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decode"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "queue",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "prefill",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "decode",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Share of request time",
+      "description": "Each stage's mean divided by queue+prefill+decode: which stage dominates each request (legend = true shares).",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "queue"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "prefill"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decode"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
+          "legendFormat": "queue",
+          "refId": "A"
+        },
+        {
+          "expr": "(sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
+          "legendFormat": "prefill",
+          "refId": "B"
+        },
+        {
+          "expr": "(sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
+          "legendFormat": "decode",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Requests waiting / running",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 20
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "waiting"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "running"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(kserve_vllm:num_requests_waiting{namespace=\"$namespace\"})",
+          "legendFormat": "waiting",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kserve_vllm:num_requests_running{namespace=\"$namespace\"})",
+          "legendFormat": "running",
+          "refId": "B"
         }
       ]
     }
