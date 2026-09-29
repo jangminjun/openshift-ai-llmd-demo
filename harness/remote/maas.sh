@@ -3,8 +3,7 @@
 # Limitador), DSC aigateway.modelsAsAService, inference/MaaS Gateways and the
 # Postgres DB maas-api needs. Idempotent -- every step checks before creating;
 # controllers are only restarted when the DSC was actually changed.
-# RHOAI 3.3/3.4 (DSC kserve.modelsAsService) uses maas-rhoai34.sh instead;
-# `harness.sh maas` picks the right one automatically.
+# RHOAI 3.5+ only; the 3.3/3.4 path (DSC kserve.modelsAsService) is no longer kept.
 #
 # RHOAI 3.5 differences from the 3.4 path (verified on 3.5.1):
 #   - MaaS lives at spec.components.aigateway.modelsAsAService (not kserve.*).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs ON the bastion, after monitoring-all and after an LLMInferenceService
+# Runs on the bastion or locally (HARNESS_EXEC), after llmd-prereq and after an LLMInferenceService
 # is deployed in LLMD_NAMESPACE. Verifies the auto-generated ServiceMonitor/
 # PodMonitor, applies a PrometheusRule (TTFT p95 + error-rate thresholds),
 # and imports the llm-d Grafana dashboard (JSON already scp'd to
@@ -11,7 +11,7 @@
 # kserve_http_requests_total's "status" label (4xx/5xx), since
 # kserve_vllm:request_success_total{finished_reason="error"} only fires for
 # failures inside the vLLM engine's generation loop, not request-validation
-# rejections. See jangminjun/monitoring-llmd-rhoai for the full test record.
+# rejections (see docs/test-results-2026-09-07.md).
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
 [ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true

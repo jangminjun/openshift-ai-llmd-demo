@@ -23,7 +23,7 @@ echo "== 1. RHOAI / llm-d CRD =="
 [ "$(oc get datasciencecluster -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ] \
   && ok "DataScienceCluster Ready" || bad "DataScienceCluster not Ready (oc get datasciencecluster)"
 oc get crd llminferenceservices.serving.kserve.io >/dev/null 2>&1 \
-  && ok "LLMInferenceService CRD present" || bad "LLMInferenceService CRD missing (RHOAI 3.3+ with kserve Managed required)"
+  && ok "LLMInferenceService CRD present" || bad "LLMInferenceService CRD missing (RHOAI 3.5+ with kserve Managed required)"
 
 echo "== 2. Gateway =="
 GW=$(oc get gateway -n openshift-ingress -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)

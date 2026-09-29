@@ -35,7 +35,7 @@
 | 항목 | 내용 |
 |---|---|
 | 사전조건 | TC-02 완료 |
-| 절차 | 1) Grafana에 Prometheus(Thanos-querier 또는 UWM Prometheus) 데이터소스 등록<br>2) `grafana/llmd-dashboard.json` import (쿼리는 `kserve_vllm:...` 및 `namespace="qwen25-coder-7b"` 라벨 기준으로 갱신됨) |
+| 절차 | 1) Grafana에 Prometheus(Thanos-querier 또는 UWM Prometheus) 데이터소스 등록<br>2) `LLMD_NAMESPACE=<ns> ./harness.sh llmd-monitoring`으로 `llm-d Observability` 대시보드 적용(`harness/remote/dashboards/llmd-observability.json`) |
 | 기대결과 | TTFT, 처리량, 에러율 패널에 실데이터 표시, 패널 갱신 주기(15초) 내 정상 갱신 |
 | 우선순위 | Medium |
 | 실측 결과 | PromQL 쿼리 레벨로는 확인함(TC-04 참고). Grafana UI 렌더링은 브라우저 접근이 필요해 이번 실행에서 CLI로는 검증하지 못함 — 사용자 확인 필요. |

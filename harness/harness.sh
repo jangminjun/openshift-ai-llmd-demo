@@ -10,16 +10,16 @@
 #
 # Usage: ./harness.sh <subcommand> [args]
 #   llmd-prereq                         check/prepare llm-d prerequisites (UWM, Grafana, CRD, Gateway, free GPU)
-#   maas                                install RHCL + enable MaaS (auto: RHOAI 3.5+ maas.sh / 3.3-3.4 maas-rhoai34.sh)
+#   maas                                install RHCL + enable MaaS (RHOAI 3.5+: DSC aigateway.modelsAsAService)
 #   maas-register-model                 register an LLMInferenceService with MaaS (LLMD_NAMESPACE/LLMD_NAME, MAAS_GROUP/MAAS_USERS,
 #                                       MAAS_TOKEN_LIMIT default 1e9/h: benchmarks exceed a realistic per-user quota)
 #   maas-unregister-model               remove an LLMInferenceService from MaaS (LLMD_NAMESPACE/LLMD_NAME)
 #   maas-api-key                        mint a MaaS API key for the oc user -> Secret llmd-bench/loadgen-token (used by llmd-loadgen)
-#   llmd-deploy-model                     deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
+#   llmd-deploy-model                   deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
 #   llmd-loadgen                        in-cluster load Job via tools/loadgen.py (LLMD_NAMESPACE/LLMD_NAME or URL/MODEL; see loadgen.py)
 #   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
-#   llmd-monitoring                         PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
-#   tracing                                   RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic + console Traces UI
+#   llmd-monitoring                     PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
+#   tracing                             RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic + console Traces UI
 #   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
 #                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
 #   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
@@ -65,19 +65,17 @@ run_bench() {
 
 cmd="${1:-}"
 [ -n "$cmd" ] && shift || true
-[ -n "$cmd" ] && resolve_exec_mode
+case "$cmd" in ""|help|-h|--help) ;; *) resolve_exec_mode ;; esac
 
 cmd_llmd_prereq() {
   ssh_bastion "MONITORING_NAMESPACE='$MONITORING_NAMESPACE' GRAFANA_ADMIN_PASSWORD='${GRAFANA_ADMIN_PASSWORD:-}' bash -s" < ./remote/llmd-prereq.sh
 }
 
-# RHOAI 3.5+ (DSC has spec.components.aigateway) -> maas.sh,
-# RHOAI 3.3/3.4 (kserve.modelsAsService) -> maas-rhoai34.sh.
+# RHOAI 3.5+ only (DSC spec.components.aigateway). The 3.3/3.4 path (kserve.modelsAsService) was dropped.
 cmd_maas() {
-  local script=maas.sh
-  ssh_bastion "${KCFG_INIT} oc explain datasciencecluster.spec.components.aigateway" >/dev/null 2>&1     || script=maas-rhoai34.sh
-  log "MaaS setup script: remote/$script"
-  ssh_bastion 'bash -s' < "./remote/$script"
+  ssh_bastion "${KCFG_INIT} oc explain datasciencecluster.spec.components.aigateway" >/dev/null 2>&1 \
+    || err "DataScienceCluster has no spec.components.aigateway -- this harness needs RHOAI 3.5+"
+  ssh_bastion 'bash -s' < ./remote/maas.sh
 }
 
 cmd_maas_register_model() {
@@ -244,7 +242,8 @@ case "$cmd" in
   scenario13-llmd-tracing)            cmd_scenario13 ;;
   scenario14-llmd-latency)            cmd_scenario14 ;;
   status)                             cmd_status ;;
+  ""|help|-h|--help)                  sed -n '/^# Usage:/,/^# Config:/p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
   *)
-    err "Unknown subcommand '$cmd'. See header comment in ./harness.sh for the list."
+    err "Unknown subcommand '$cmd'. Run ./harness.sh help for the list."
     ;;
 esac
