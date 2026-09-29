@@ -223,17 +223,20 @@ URL은 클러스터마다 다르며 `AGENT.md`에 기록한다.
 
 ```
 harness/
-  harness.sh                  진입점 (llmd-prereq, maas*, llmd-*, tracing, scenario11-14, scenario21-29, maas-checks)
+  harness.sh                  진입점 (./harness.sh 로 명령 목록 확인)
   config.env                  실행 위치(HARNESS_EXEC), bastion, 모델/GPU 기본값
   lib.sh                      실행 위치 판별, ssh_bastion/scp_to_bastion (local 모드는 로컬 실행)
-  tools/loadgen.py            클러스터 내 부하 생성기 (스트리밍 TTFT/E2E, multi-prefix·image 모드)
-  remote/lib/bench.sh         시나리오 공통 함수 (부하 Job, Thanos, pod 카운터, EPP 설정 교체, 사전 점검)
-  remote/scenario2*.sh        시나리오 21~29 측정 스크립트
-  remote/maas*.sh             MaaS 설치(3.5+/3.3-3.4), 모델 등록·해제, API 키, 점검
-  remote/*.sh                 배포·관측·트레이싱·시나리오 11~14 스크립트
-  remote/dashboards/          llmd-observability.json (Grafana)
+  tools/loadgen.py            클러스터 내 부하 생성기 (스트리밍 TTFT/E2E, multi-prefix·multi-turn·image, ignore_eos, 턴 사이 정지)
+  remote/lib/bench.sh         공통 함수 (부하 Job, Thanos, pod 카운터, EPP 설정, replica, 추적, Tempo 조회, 사전 점검)
+  remote/scenario1[1-4]-*.sh  시나리오 11~14 (llmd-test 기준)
+  remote/scenario2*.sh        시나리오 21~29
+  remote/maas*.sh             MaaS 설치(RHOAI 3.5+), 모델 등록·해제, API 키, 점검
+  remote/tracing.sh           Tempo(멀티테넌시), OTel Collector, 콘솔 Traces UI
+  remote/llmd-*.sh            사전 점검, 모델 배포, 부하, PromQL, 모니터링
+  remote/dashboards/          llmd-observability.json (Grafana, 지연 분해 패널 포함)
 docs/
-  scenarios/                  21~29(llm-d GA, llmd-ga-overview.md), 11~16(분산 운영)
+  scenarios/                  11~14(llmd-test), 15~16(설계, 보류), 21~29(llm-d GA, llmd-ga-overview.md)
+  scenarios/images/           시나리오별 화면 캡처
   test-cases.md               관측성 테스트케이스 TC-01~05
   test-results-2026-09-07.md  RHOAI 3.4.4 실측 결과
 manifests/
@@ -241,7 +244,6 @@ manifests/
   prometheusrule-llmd-alerts.yaml      TTFT·에러율 알림 규칙
   servicemonitor-llmd.yaml             자동 생성 모니터 사본(참고)
   dsci-observability-patch.yaml        관측성 스택 패치 예시
-grafana/llmd-dashboard.json   TTFT·처리량·에러율 대시보드
 lessonlearn.md                발견 이슈와 교훈 (플랫폼 제약 포함)
 AGENT.md.example              AGENT.md 템플릿 (AGENT.md는 gitignore)
 ```

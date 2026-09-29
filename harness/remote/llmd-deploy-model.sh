@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # Shared by the llm-d scenario scripts (scenario 24, 29, ad hoc): deploys one
 # LLMInferenceService directly from a HuggingFace repo (no PVC/data
-# connection needed). Runs ON the bastion. Idempotent.
+# connection needed). Runs on the bastion or locally (HARNESS_EXEC). Idempotent.
 #
 # Default model is Qwen2.5-7B-Instruct, not the newer Qwen3.5/3.6 family --
 # Qwen3.5 introduces a hybrid Gated DeltaNet + Gated Attention architecture
-# that is NOT confirmed compatible with the vLLM build RHOAI 3.4.4 ships
-# (registry.redhat.io/rhaii/vllm-cuda-rhel9). Override MODEL_URI/MODEL_NAME
-# to try Qwen3.5-9B once that's verified (LLMD_MODEL_URI=hf://Qwen/Qwen3.5-9B) --
-# see docs/scenarios/qwen3.5-compat-check.md in monitoring-llmd-rhoai for
-# how to check compatibility before betting a whole scenario run on it.
+# that was not confirmed compatible with the RHOAI vLLM build when this default
+# was chosen. Override LLMD_MODEL_URI/LLMD_MODEL_NAME to try another model;
+# check that it loads (oc logs <workload-pod>) before a full scenario run.
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
 [ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
