@@ -39,6 +39,15 @@ cd openshift-ai-llmd-demo/harness
 `TRACING=off ./harness.sh llmd-tracing`을 실행한다. 콘솔에서는 Observe → Traces에서 `openshift-tempo/llmd-tracing`
 (tenant `llmd`)을 선택하고 출력된 trace ID로 조회한다.
 
+![콘솔 Observe → Traces: openshift-tempo/llmd-tracing, tenant llmd의 trace 목록](images/13/trace-dashboard.png)
+
+*그림 1. Traces 목록. trace마다 EPP(`inference-scheduler`) 5개와 vLLM(`inference-server-decode`) 1개 span이 묶인다.
+root span은 Gateway(Envoy)가 보내지 않으므로 `<root span not yet received>`로 표시된다.*
+
+![trace 소요 시간 분포 그래프](images/13/trace-graph.png)
+
+*그림 2. 소요 시간 분포. 점 하나가 trace 하나이며, 점을 누르면 해당 trace의 서비스·span 수·소요 시간이 표시된다.*
+
 ## 실측 결과 (2026-09-29, RHOAI 3.5.1, Qwen2.5-1.5B-Instruct, A10G)
 
 대화 5개, 문서 약 3,000토큰, 응답 32토큰, 동시 1(대기열 없음).
@@ -48,6 +57,17 @@ cd openshift-ai-llmd-demo/harness
 | prefill | 약 0.173초 | 약 0.032초 (**−82%**) |
 | TTFT | 약 0.184초 | 약 0.043초 (**−77%**) |
 | queue | 0 | 0 |
+
+같은 대화(대화 4)의 두 trace를 콘솔에서 조회한 결과는 다음과 같다. TraceQL `{ trace:id = "<id>" }`로 검색한다.
+
+| | 1턴 (miss) `d6bc0ef4…a555a6` | 2턴 (hit) `29e57370…776d5d8` |
+|---|---|---|
+| 검색 | ![1턴 검색](images/13/cache-miss-search.png) | ![2턴 검색](images/13/cache-hit-search.png) |
+| 상세 | ![1턴 상세](images/13/cache-miss-trace.png) | ![2턴 상세](images/13/cache-hit-trace.png) |
+| `gateway.request` / `llm_request` | 932ms / 683ms | 659ms / 376ms |
+
+*그림 3. 캐시 miss와 hit의 trace 상세. EPP의 pod 선택 span(`filter_endpoints` 2µs, `pick_endpoints` 9µs)은 두 경우 모두
+무시할 수준이며, 차이는 vLLM `llm_request`(prefill)에서 난다.*
 
 - **캐시 적중은 prefill을 약 5분의 1로 줄인다.** 2턴은 문서 부분을 다시 계산하지 않고 새 질문만 처리한다.
 - **EPP의 pod 선택은 1ms 미만이다.** 후보 2개에서 filter·pick이 즉시 끝난다.
