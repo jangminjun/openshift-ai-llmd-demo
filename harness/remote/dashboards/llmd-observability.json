@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 13,
+  "version": 14,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -1401,6 +1401,220 @@
         {
           "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
           "legendFormat": "req/s - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "row",
+      "title": "Scorer weights (scenario 27)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 125
+      },
+      "panels": []
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Requests/s by pod",
+      "description": "Cache-first (P1) sends a hot document to one pod; load-first (P2) splits it once a queue forms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 126
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "req/s - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Queued requests by pod (load signal)",
+      "description": "vLLM queue per pod. queue/kv scorers only differentiate pods when this is above zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 126
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(max by (pod)(kserve_vllm:num_requests_waiting{namespace=\"$namespace\"}), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "waiting - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Running requests by pod",
+      "description": "Requests executing per pod (capped by --max-num-seqs). One pod at the cap and the other idle = skewed routing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 134
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(max by (pod)(kserve_vllm:num_requests_running{namespace=\"$namespace\"}), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "running - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "Prefix cache hit rate by pod",
+      "description": "What cache-first buys: document reuse per pod.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 134
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:prefix_cache_hits_total{namespace=\"$namespace\"}[1m])) / sum by (pod)(rate(kserve_vllm:prefix_cache_queries_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "prefix cache hit rate - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "TTFT p50 / p95",
+      "description": "End effect of the policy on latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 142
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p50 - all pods",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p95 - all pods",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Queue time per request (mean)",
+      "description": "Time spent waiting in vLLM. Grows when a policy piles requests onto one pod.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 142
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "queue time - mean",
           "refId": "A"
         }
       ]
