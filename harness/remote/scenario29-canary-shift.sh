@@ -30,4 +30,4 @@ for st in $STEPS; do
   echo "    measured: $(split "$b" "$a")"
 done
 S=$(loadgen_wait s29); brief "$S"
-"$PY" -c 'import sys,json; s=json.loads(sys.argv[1]); print("  non-200 at t=", [t for t, c in s["timeline"] if c != 200])' "$S"
+printf '%s' "$S" | "$PY" -c 'import sys,json; s=json.load(sys.stdin); print("  non-200 at t=", [r[0] for r in s["timeline"] if r[1] != 200])'

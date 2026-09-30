@@ -32,9 +32,10 @@ run_fail() {
     sleep 5
   done
   s=$(loadgen_wait s12)
-  "$PY" - "$s" "$kill" "${rec:-0}" <<'PYEOF'
+  sf=$(mktemp); printf '%s' "$s" > "$sf"   # file, not argv: a TIMELINE summary exceeds the Windows argv limit
+  "$PY" - "$sf" "$kill" "${rec:-0}" <<'PYEOF'
 import sys, json, statistics as st
-s, kill, rec = json.loads(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
+s, kill, rec = json.load(open(sys.argv[1])), float(sys.argv[2]), float(sys.argv[3])
 k = kill - s["start_epoch"]; r = (rec - s["start_epoch"]) if rec else None
 tl = s["timeline"]; err = [t for t, c, _ in tl if c != 200]
 def ttft(a, b):
@@ -56,6 +57,7 @@ for t, c, _ in tl:
     if -15 <= b <= 240: buckets.setdefault(b, [0, 0])[c != 200] += 1
 print("  %-14s per 15s from kill (ok/err): %s" % ("", " ".join("%+d:%d/%d" % (b, *v) for b, v in sorted(buckets.items()))))
 PYEOF
+  rm -f "$sf"
 }
 
 for arm in ${S12_ARMS:-A B C}; do case $arm in

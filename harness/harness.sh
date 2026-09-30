@@ -28,8 +28,10 @@
 #   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
 #   scenario14-llmd-latency             latency diagnosis: queue / prefill / decode bottleneck workloads
 #   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
-#   scenario22-llmd-epp-scorers         default EPP vs random-picker, multi-document workload
-#   scenario23-llmd-lifecycle           rolling update under continuous traffic
+#   scenario22-llmd-epp-scorers         scorer effects, S22_PARTS="abc kv lru": 1 random/2/4 scorers, 2 KV-full pod
+#                                       avoidance (kv-cache-utilization), 3 new-document placement (no-hit-lru)
+#   scenario23-llmd-lifecycle           zero-downtime rolling update under traffic (any model: LLMD_NAMESPACE/LLMD_NAME,
+#                                       S23_DURATION must cover the rollout; needs 1 idle GPU)
 #   scenario24-llmd-vlm-{up,run,down}   multimodal routing on a VLM (needs llmd-test-down first)
 #   scenario25-llmd-tracing             spec.tracing -> Tempo, prints spans per request
 #   scenario26-llmd-tls                 TLS on vs off (DSC, cluster-wide), restores

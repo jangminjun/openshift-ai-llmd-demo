@@ -2,6 +2,22 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-30 — 시나리오 21~23 재수행
+
+- **`kserve_http_requests_total`이 수집되지 않는다(RHOAI 3.5.1).** 대시보드 `Throughput`·`Error Rate` 패널이 항상
+  비어 있었고, 오류율 알림도 발화할 수 없었다. 패널은 MaaS Gateway의 `istio_requests_total`(응답 코드, response flag)로,
+  알림은 같은 namespace에서 조회 가능한 vLLM `finished_reason=error|abort` 비율로 대체하였다.
+- **롤링 중 실패는 Pod 지표에 남지 않는다.** 준비 중·종료된 Pod로 간 요청은 vLLM에 도달하지 않는다. 무중단 판정은
+  부하 생성기 기록과 Gateway 응답 코드로 한다.
+- **Windows 로컬 실행에서 명령 인자 길이 초과.** 요청별 기록(TIMELINE)을 `python -c ... "$S"`로 넘기면 `Argument list too
+  long`으로 실패한다. 표준 입력이나 파일로 넘긴다(`brief`, 시나리오 12·23·29 수정).
+- **TIMELINE 형식 변경 미반영.** 요청 기록이 `[t, code, ttft]`로 바뀌었으나 시나리오 23·29는 `(t, code)`로 풀고 있었다.
+- **롤링 재시작 직후 Pod 선택.** 재시작 직후 `oc get pods`에는 종료 중인 옛 Pod가 남아 있어, 시나리오 22 실험 2가 옛 Pod
+  IP로 요청을 보내 전부 실패하였다. `status.phase=Running`이고 `deletionTimestamp`가 없는 Pod만 고르고, 실험 조건(KV 사용률)을
+  측정 전에 확인하도록 하였다.
+- **기본 EPP 가중치에서 kv-cache-utilization과 no-hit-lru가 상쇄된다.** 캐시 적중이 없는 새 요청에서 두 Scorer의 가중치가
+  같아(2), 가득 찬 Pod 회피 효과가 사라졌다(시나리오 22 실험 2).
+
 ## 2026-09-30 — sandbox3925 신규 클러스터 준비
 
 - **Grafana 13 CLI는 작업 디렉터리가 homepath여야 한다.** `grafana cli --homepath /usr/share/grafana admin

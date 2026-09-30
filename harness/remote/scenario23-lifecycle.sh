@@ -30,12 +30,13 @@ wait_isvc "$NS" "$N"; T2=$(date +%s)
 echo "  rollout: $((T2 - T1))s (t=$((T1 - T0))s .. t=$((T2 - T0))s)"
 S=$(loadgen_wait s23); kill "$WPID" 2>/dev/null || true
 brief "$S"
-"$PY" -c '
+printf '%s' "$S" | "$PY" -c '
 import sys, json
-s = json.loads(sys.argv[1]); t1, t2 = float(sys.argv[2]), float(sys.argv[3]); tl = s["timeline"]
+s = json.load(sys.stdin); t1, t2 = float(sys.argv[1]), float(sys.argv[2]); tl = s["timeline"]
 for name, (a, b) in {"before": (0, t1), "rollout": (t1, t2), "after": (t2, 1e9)}.items():
-    xs = [c for t, c in tl if a <= t < b]; bad = [(t, c) for t, c in tl if a <= t < b and c != 200]
-    print("  %-8s requests=%-5d non-200=%d %s" % (name, len(xs), len(bad), bad[:5]))' "$S" "$((T1 - T0))" "$((T2 - T0))"
+    xs = [r for r in tl if a <= r[0] < b]; bad = [(r[0], r[1]) for r in xs if r[1] != 200]   # r = [t, code, ttft]
+    tt = sorted(r[2] for r in xs if r[2]); p = lambda q: tt[min(len(tt) - 1, int(q * len(tt)))] if tt else None
+    print("  %-8s requests=%-5d non-200=%d ttft_p50=%s ttft_p95=%s %s" % (name, len(xs), len(bad), p(0.5), p(0.95), bad[:5]))' "$((T1 - T0))" "$((T2 - T0))"
 echo "  pod transitions (t = seconds from traffic start):"
 awk -v t0="$T0" '($5=="Running" && $4=="1/1") || $5=="Terminating" || $2=="DELETED" {k=$3" "$4" "$5; if(!(k in s)){s[k]=1; printf "    t=%-5d %-8s %s %s %s\n", $1-t0, $2, $3, $4, $5}}' "$WATCH"
 rm -f "$WATCH"

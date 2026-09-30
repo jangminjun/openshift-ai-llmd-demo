@@ -126,7 +126,8 @@ loadgen_wait() {  # <job-name> -> SUMMARY json on stdout
 }
 loadgen() { loadgen_start "$@"; loadgen_wait "$1"; }   # blocking run
 brief() {  # <summary-json> -> compact line (drops timeline)
-  "$PY" -c 'import sys,json; s=json.loads(sys.argv[1]); s.pop("timeline",None); s.pop("errors",None); print("  "+json.dumps(s))' "$1"
+  # via stdin: a TIMELINE summary exceeds the Windows argv limit ("Argument list too long")
+  printf '%s' "$1" | "$PY" -c 'import sys,json; s=json.load(sys.stdin); s.pop("timeline",None); s.pop("errors",None); print("  "+json.dumps(s))'
 }
 
 # ---------- LLMInferenceService / EPP ----------

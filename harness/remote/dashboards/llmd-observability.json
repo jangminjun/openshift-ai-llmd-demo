@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 7,
+  "version": 11,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -11,8 +11,8 @@
   },
   "panels": [
     {
-      "id": 1,
-      "title": "TTFT (p95)",
+      "id": 2,
+      "title": "Throughput (req/s)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -26,58 +26,18 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 2
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
-          "legendFormat": "TTFT p95",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Throughput (req/s)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_THANOS}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "fieldConfig": {
-        "defaults": {
           "unit": "reqps"
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "sum(rate(kserve_http_requests_total{namespace=\"$namespace\"}[5m]))",
-          "legendFormat": "Total requests/s",
+          "expr": "sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\"}[1m]))",
+          "legendFormat": "Gateway req/s - all codes",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Requests answered by the MaaS Gateway for this namespace (istio_requests_total), all response codes."
     },
     {
       "id": 3,
@@ -90,8 +50,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 8
+        "x": 12,
+        "y": 0
       },
       "fieldConfig": {
         "defaults": {
@@ -118,8 +78,50 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(kserve_http_requests_total{namespace=\"$namespace\",status=~\"4xx|5xx\"}[5m])) / sum(rate(kserve_http_requests_total{namespace=\"$namespace\"}[5m]))",
-          "legendFormat": "Error rate",
+          "expr": "sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m])) / sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\"}[1m]))",
+          "legendFormat": "non-2xx ratio - gateway",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of non-2xx responses returned to clients by the MaaS Gateway (istio_requests_total)."
+    },
+    {
+      "id": 1,
+      "title": "TTFT (p95)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+          "legendFormat": "TTFT p95",
           "refId": "A"
         }
       ]
@@ -896,6 +898,290 @@
         {
           "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
           "legendFormat": "TTFT p95 - all pods",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Rollout / pod lifecycle (scenario 23)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "title": "Replicas: desired / updated / available",
+      "description": "Zero-downtime rollout: 'available' never drops below 'desired' while 'updated' climbs to it.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 68
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(kube_deployment_spec_replicas{namespace=\"$namespace\", deployment=~\".+-kserve\"})",
+          "legendFormat": "desired",
+          "refId": "A"
+        },
+        {
+          "expr": "max(kube_deployment_status_replicas_updated{namespace=\"$namespace\", deployment=~\".+-kserve\"})",
+          "legendFormat": "updated (new version)",
+          "refId": "B"
+        },
+        {
+          "expr": "max(kube_deployment_status_replicas_available{namespace=\"$namespace\", deployment=~\".+-kserve\"})",
+          "legendFormat": "available (Ready)",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Pod ready (vLLM workload)",
+      "description": "Ready = model loaded and /health OK. New pods turn Ready before old ones leave.",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 68
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Ready",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "Not ready",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(max by (pod)(kube_pod_status_ready{namespace=\"$namespace\", pod=~\".+-kserve-[a-z0-9]+-[a-z0-9]{5}\", condition=\"true\"}), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "pod {{short}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8
+      }
+    },
+    {
+      "id": 21,
+      "title": "Throughput by pod",
+      "description": "Requests completed by each vLLM pod. Traffic moves from old to new pods during a rollout.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 76
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "completed req/s - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Error rate by pod (vLLM, reference only)",
+      "description": "Only requests a pod actually processed and ended with error/abort. Rollout failures (sent to a loading or terminated pod, cut connections) never reach vLLM metrics -> judge with the Gateway panels.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 76
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\", finished_reason=~\"error|abort\"}[1m])) / sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "error+abort ratio - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "Gateway responses by HTTP code",
+      "description": "What clients actually received from the MaaS Gateway. Anything other than 200 during a rollout is a lost request.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (response_code)(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\"}[1m]))",
+          "legendFormat": "HTTP {{response_code}} req/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "title": "Pod startup time (start -> Ready)",
+      "description": "Per pod: model download (storage-initializer) + model loading + vLLM init. Grows with model size.",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(max by (pod)(kube_pod_status_ready_time{namespace=\"$namespace\", pod=~\".+-kserve-[a-z0-9]+-[a-z0-9]{5}\"}) - max by (pod)(kube_pod_start_time{namespace=\"$namespace\", pod=~\".+-kserve-[a-z0-9]+-[a-z0-9]{5}\"}), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "pod {{short}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "displayMode": "basic"
+      }
+    },
+    {
+      "id": 25,
+      "title": "Gateway failures by cause (non-2xx)",
+      "type": "timeseries",
+      "description": "Client-visible failures split by Envoy response flag. UF = connect to pod failed, UC = connection cut mid-request, UH/NR = no pod to route to, URX = retries exhausted, '-' = error returned by the pod or auth. Flat 0 during a rollout = zero downtime.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (response_code, response_flags)(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m]))",
+          "legendFormat": "HTTP {{response_code}} flag {{response_flags}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m])) or on() vector(0)",
+          "legendFormat": "all failures",
           "refId": "B"
         }
       ]

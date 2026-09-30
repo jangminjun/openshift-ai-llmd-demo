@@ -5,13 +5,11 @@
 # and imports the llm-d Grafana dashboard (JSON already scp'd to
 # ~/ocp-install/llmd-observability.json by cmd_llmd_monitoring).
 #
-# Metric names verified live against a real llm-d (KServe LLMInferenceService)
-# deployment: vLLM metrics carry a "kserve_vllm:" prefix (not "vllm:"), and
-# there is no separate failure counter — error rate is computed from
-# kserve_http_requests_total's "status" label (4xx/5xx), since
-# kserve_vllm:request_success_total{finished_reason="error"} only fires for
-# failures inside the vLLM engine's generation loop, not request-validation
-# rejections (see docs/test-results-2026-09-07.md).
+# Metric names verified live on RHOAI 3.5.1 (KServe LLMInferenceService): vLLM
+# metrics carry a "kserve_vllm:" prefix. kserve_http_requests_total (used on the
+# 2026-09-07 cluster, docs/test-results-2026-09-07.md) is no longer exported, so
+# the alert uses vLLM finished_reason=error|abort, and the dashboard takes
+# client-visible throughput/errors from the MaaS Gateway (istio_requests_total).
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
 [ -f "$HOME/ocp-install/auth/kubeconfig" ] && export KUBECONFIG="$HOME/ocp-install/auth/kubeconfig" || true
@@ -52,12 +50,14 @@ spec:
             description: "TTFT p95 has been {{ \$value }}s for 5m+."
     - name: llmd.error-rate
       rules:
+        # vLLM-side ratio of requests that ended in error/abort. Gateway (client-visible) errors live in
+        # openshift-ingress and cannot be queried from a namespaced rule -> see the dashboard's Error Rate panel.
         - alert: LLMDHighErrorRate
           expr: |
             (
-              sum(rate(kserve_http_requests_total{namespace="${LLMD_NAMESPACE}",status=~"4xx|5xx"}[5m]))
+              sum(rate(kserve_vllm:request_success_total{namespace="${LLMD_NAMESPACE}",finished_reason=~"error|abort"}[5m]))
               /
-              sum(rate(kserve_http_requests_total{namespace="${LLMD_NAMESPACE}"}[5m]))
+              sum(rate(kserve_vllm:request_success_total{namespace="${LLMD_NAMESPACE}"}[5m]))
             ) > ${ERROR_RATE_THRESHOLD}
           for: 5m
           labels:
