@@ -175,12 +175,13 @@ epp_set() {
 }
 epp_restore_default() { epp_set "$1" "$2" "$(epp_default "$(tls_scheme)")"; echo "  EPP config restored to default"; }
 vllm_args() { oc get llminferenceservice "$2" -n "$1" -o jsonpath='{.spec.template.containers[0].env[?(@.name=="VLLM_ADDITIONAL_ARGS")].value}'; }
-# set_max_num_seqs <ns> <name> <n|default>: rewrites --max-num-seqs in VLLM_ADDITIONAL_ARGS (rolling restart)
-set_max_num_seqs() {
-  local ns=$1 n=$2 v=$3 cur new idx
+# set_vllm_flag <ns> <name> <flag> <value|default>: rewrites --<flag>=<value> in VLLM_ADDITIONAL_ARGS
+# ("default" removes it); rolling restart of the workload -> needs one idle GPU.
+set_vllm_flag() {
+  local ns=$1 n=$2 f=$3 v=$4 cur new idx
   cur=$(vllm_args "$ns" "$n")
-  new=$(printf '%s' "$cur" | sed -E 's/ ?--max-num-seqs=[0-9]+//')
-  [ "$v" = default ] || new="$new --max-num-seqs=$v"
+  new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}=[0-9]+//")
+  [ "$v" = default ] || new="$new --${f}=$v"
   [ "$new" = "$cur" ] && { echo "  vLLM args unchanged ($cur)"; return; }
   require_free_gpu
   idx=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{range .spec.template.containers[0].env[*]}{.name}{"\n"}{end}' | grep -nx VLLM_ADDITIONAL_ARGS | cut -d: -f1)
@@ -189,6 +190,7 @@ set_max_num_seqs() {
   echo "  vLLM args -> $new (rolling restart)"
   sleep 5; wait_isvc "$ns" "$n"
 }
+set_max_num_seqs() { set_vllm_flag "$1" "$2" max-num-seqs "$3"; }
 # ---------- tracing (spec.tracing -> OTel Collector -> multi-tenant Tempo, see remote/tracing.sh) ----------
 TRACING_NS="${TRACING_NAMESPACE:-openshift-tempo}"
 TRACING_EP="http://llmd-otel-collector.${TRACING_NS}.svc.cluster.local:4317"

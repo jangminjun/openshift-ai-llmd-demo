@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 5,
+  "version": 7,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -146,8 +146,8 @@
       },
       "targets": [
         {
-          "expr": "kserve_vllm:kv_cache_usage_perc{namespace=\"$namespace\"}",
-          "legendFormat": "{{pod}}",
+          "expr": "label_replace(kserve_vllm:kv_cache_usage_perc{namespace=\"$namespace\"}, \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "KV cache used - pod {{short}}",
           "refId": "A"
         }
       ]
@@ -245,17 +245,17 @@
       "targets": [
         {
           "expr": "sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))",
-          "legendFormat": "queue",
+          "legendFormat": "queue time (mean)",
           "refId": "A"
         },
         {
           "expr": "sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))",
-          "legendFormat": "prefill",
+          "legendFormat": "prefill time (mean)",
           "refId": "B"
         },
         {
           "expr": "sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))",
-          "legendFormat": "decode",
+          "legendFormat": "decode time (mean)",
           "refId": "C"
         }
       ]
@@ -355,17 +355,17 @@
       "targets": [
         {
           "expr": "(sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
-          "legendFormat": "queue",
+          "legendFormat": "queue share",
           "refId": "A"
         },
         {
           "expr": "(sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
-          "legendFormat": "prefill",
+          "legendFormat": "prefill share",
           "refId": "B"
         },
         {
           "expr": "(sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))) / ((sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))) + (sum(rate(kserve_vllm:request_decode_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_decode_time_seconds_count{namespace=\"$namespace\"}[1m]))))",
-          "legendFormat": "decode",
+          "legendFormat": "decode share",
           "refId": "C"
         }
       ]
@@ -395,7 +395,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "waiting"
+              "options": "vLLM waiting requests"
             },
             "properties": [
               {
@@ -410,7 +410,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "running"
+              "options": "vLLM running requests"
             },
             "properties": [
               {
@@ -427,12 +427,12 @@
       "targets": [
         {
           "expr": "sum(kserve_vllm:num_requests_waiting{namespace=\"$namespace\"})",
-          "legendFormat": "waiting",
+          "legendFormat": "vLLM waiting requests",
           "refId": "A"
         },
         {
           "expr": "sum(kserve_vllm:num_requests_running{namespace=\"$namespace\"})",
-          "legendFormat": "running",
+          "legendFormat": "vLLM running requests",
           "refId": "B"
         }
       ]
@@ -476,7 +476,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p100.*|.*p100$"
+              "options": ".*priority 100$"
             },
             "properties": [
               {
@@ -491,7 +491,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p0.*|.*p0$"
+              "options": ".*priority 0$"
             },
             "properties": [
               {
@@ -508,7 +508,7 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le, priority)(rate(llm_d_epp_request_ttft_seconds_bucket{namespace=\"$namespace\"}[1m])))",
-          "legendFormat": "p{{priority}}",
+          "legendFormat": "TTFT p95 - priority {{priority}}",
           "refId": "A"
         }
       ]
@@ -539,7 +539,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p100.*|.*p100$"
+              "options": ".*priority 100$"
             },
             "properties": [
               {
@@ -554,7 +554,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p0.*|.*p0$"
+              "options": ".*priority 0$"
             },
             "properties": [
               {
@@ -571,7 +571,7 @@
       "targets": [
         {
           "expr": "sum by (priority)(rate(llm_d_epp_flow_control_request_queue_duration_seconds_sum{namespace=\"$namespace\"}[1m])) / sum by (priority)(rate(llm_d_epp_flow_control_request_queue_duration_seconds_count{namespace=\"$namespace\"}[1m]))",
-          "legendFormat": "p{{priority}}",
+          "legendFormat": "EPP queue wait - priority {{priority}}",
           "refId": "A"
         }
       ]
@@ -602,22 +602,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^vLLM.*"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^EPP queue p100$"
+              "options": ".*priority 100$"
             },
             "properties": [
               {
@@ -632,7 +617,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^EPP queue p0$"
+              "options": ".*priority 0$"
             },
             "properties": [
               {
@@ -643,18 +628,33 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^vLLM.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
           }
         ]
       },
       "targets": [
         {
           "expr": "sum by (priority)(llm_d_epp_flow_control_queue_size{namespace=\"$namespace\"})",
-          "legendFormat": "EPP queue p{{priority}}",
+          "legendFormat": "EPP queue length - priority {{priority}}",
           "refId": "A"
         },
         {
           "expr": "sum(kserve_vllm:num_requests_waiting{namespace=\"$namespace\"})",
-          "legendFormat": "vLLM waiting (FCFS)",
+          "legendFormat": "vLLM waiting (FCFS, all priorities)",
           "refId": "B"
         }
       ]
@@ -685,7 +685,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p100.*|.*p100$"
+              "options": ".*priority 100$"
             },
             "properties": [
               {
@@ -700,7 +700,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^p0.*|.*p0$"
+              "options": ".*priority 0$"
             },
             "properties": [
               {
@@ -715,7 +715,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "saturation"
+              "options": "pool saturation"
             },
             "properties": [
               {
@@ -740,12 +740,162 @@
       "targets": [
         {
           "expr": "sum by (priority)(rate(llm_d_epp_request_total{namespace=\"$namespace\"}[1m]))",
-          "legendFormat": "p{{priority}}",
+          "legendFormat": "req/s - priority {{priority}}",
           "refId": "A"
         },
         {
           "expr": "max(llm_d_epp_flow_control_pool_saturation{namespace=\"$namespace\"})",
-          "legendFormat": "saturation",
+          "legendFormat": "pool saturation",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Routing / Scorer (scenario 22)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "title": "Requests/s by pod",
+      "description": "How EPP splits requests across vLLM pods. no-hit-lru / kv-cache-utilization scorers change this split.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "req/s - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Prefix cache hit rate by pod",
+      "description": "Share of prompt tokens served from the prefix cache. prefix-cache-scorer raises this by routing a document back to the pod that cached it.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:prefix_cache_hits_total{namespace=\"$namespace\"}[1m])) / sum by (pod)(rate(kserve_vllm:prefix_cache_queries_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "prefix cache hit rate - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "KV cache usage by pod",
+      "description": "KV cache in use per pod. kv-cache-utilization-scorer steers new requests away from the fuller pod.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(max by (pod)(kserve_vllm:kv_cache_usage_perc{namespace=\"$namespace\"}), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "KV cache used - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "TTFT p50 / p95",
+      "description": "End effect of routing: cache hits shorten prefill and therefore TTFT.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p50 - all pods",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p95 - all pods",
           "refId": "B"
         }
       ]

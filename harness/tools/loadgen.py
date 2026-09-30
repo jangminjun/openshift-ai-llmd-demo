@@ -17,6 +17,7 @@ Env:
   PROMPT_MODE  short | shared-prefix | multi-prefix | unique-long | image | multi-turn (default short)
   DOCS         number of distinct documents for multi-prefix (default 100)
   DOC_OFFSET   first document id (use a new range per run to start with cold caches)
+  DOC_ORDER    multi-prefix: random (default) | seq = request i uses document DOC_OFFSET + i % DOCS
   PREFIX_TOKENS approx. size of shared/unique prompt body (default 2000)
   IMAGE_URLS   comma-separated image URLs/data-URLs for PROMPT_MODE=image; a single URL containing
                "{n}" is a template filled with DOC_OFFSET + random(DOCS) (e.g. seeded image service)
@@ -42,7 +43,7 @@ TOKEN = E("TOKEN") or (open("/var/run/secrets/kubernetes.io/serviceaccount/token
 CONC = int(E("CONCURRENCY", "4")); REQS = int(E("REQUESTS", "0")); DUR = float(E("DURATION", "60"))
 INTERVAL = float(E("INTERVAL", "0")); MAXTOK = int(E("MAX_TOKENS", "64"))
 MODE = E("PROMPT_MODE", "short"); PREFIX = int(E("PREFIX_TOKENS", "2000"))
-DOCS = int(E("DOCS", "100")); DOC_OFFSET = int(E("DOC_OFFSET", "0"))
+DOCS = int(E("DOCS", "100")); DOC_OFFSET = int(E("DOC_OFFSET", "0")); DOC_ORDER = E("DOC_ORDER", "random")
 IMAGES = [u for u in E("IMAGE_URLS", "").split(",") if u]
 HDRS = json.loads(E("HEADERS", "{}")); LABEL = E("LABEL", ""); TIMEOUT = float(E("TIMEOUT", "300"))
 SESSIONS = int(E("SESSIONS", "64")); TURNS = int(E("TURNS", "3")); SESSION_HEADER = E("SESSION_HEADER", "x-session-token")
@@ -64,7 +65,7 @@ def messages(i):
         return [{"role": "system", "content": "Reference document: " + SHARED},
                 {"role": "user", "content": QUESTIONS[i % len(QUESTIONS)]}]
     if MODE == "multi-prefix":  # random doc out of DOCS, each a stable PREFIX_TOKENS-long text
-        d = DOC_OFFSET + random.randrange(DOCS)
+        d = DOC_OFFSET + (i % DOCS if DOC_ORDER == "seq" else random.randrange(DOCS))
         text = words(d)
         return [{"role": "system", "content": "Document %d: %s" % (d, text)},
                 {"role": "user", "content": random.choice(QUESTIONS)}]
