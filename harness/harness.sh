@@ -165,6 +165,17 @@ cmd_llmd_test_up() {
 oc get namespace "${LLMD_NAMESPACE:-llmd-test}" &>/dev/null || oc create namespace "${LLMD_NAMESPACE:-llmd-test}"
 oc apply -f "$HOME/ocp-install/llmd-model.json"; sleep 5
 wait_isvc "${LLMD_NAMESPACE:-llmd-test}" "${LLMD_NAME:-llmd-test}"
+# maas-controller may have checked the model before its pods were Ready and does not recheck on its own
+ns="${LLMD_NAMESPACE:-llmd-test}"; n="${LLMD_NAME:-llmd-test}"
+if oc get maasmodelref "$n" -n "$ns" &>/dev/null; then
+  for _ in $(seq 1 12); do [ "$(oc get maasmodelref "$n" -n "$ns" -o jsonpath="{.status.conditions[?(@.type==\"Ready\")].status}")" = True ] && break; sleep 5; done
+  if [ "$(oc get maasmodelref "$n" -n "$ns" -o jsonpath="{.status.conditions[?(@.type==\"Ready\")].status}")" != True ]; then
+    echo "  MaaSModelRef $ns/$n not Ready -> restarting maas-controller to recheck"
+    oc rollout restart deploy/maas-controller -n redhat-ods-applications >/dev/null
+    oc rollout status deploy/maas-controller -n redhat-ods-applications --timeout=180s >/dev/null
+  fi
+  oc get maasmodelref "$n" -n "$ns"
+fi
 oc get llminferenceservice -n "${LLMD_NAMESPACE:-llmd-test}"'
 }
 
