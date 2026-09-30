@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -433,6 +433,319 @@
         {
           "expr": "sum(kserve_vllm:num_requests_running{namespace=\"$namespace\"})",
           "legendFormat": "running",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Flow Control / Priority (scenario 21)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "title": "TTFT p95 by priority (EPP)",
+      "description": "EPP-measured TTFT per InferenceObjective priority. Inversion: p100 at or above p0.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p100.*|.*p100$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p0.*|.*p0$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, priority)(rate(llm_d_epp_request_ttft_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "p{{priority}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "EPP queue wait by priority (mean)",
+      "description": "Time spent in the EPP Flow Control queue. Flow Control must be enabled. Inversion: p100 wait > p0 wait.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p100.*|.*p100$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p0.*|.*p0$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (priority)(rate(llm_d_epp_flow_control_request_queue_duration_seconds_sum{namespace=\"$namespace\"}[1m])) / sum by (priority)(rate(llm_d_epp_flow_control_request_queue_duration_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "p{{priority}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Where requests wait: EPP priority queue vs vLLM FCFS queue",
+      "description": "Priority only applies while requests wait in the EPP queue. A queue building inside vLLM (utilization-detector) is FCFS and causes priority inversion.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^vLLM.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^EPP queue p100$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^EPP queue p0$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (priority)(llm_d_epp_flow_control_queue_size{namespace=\"$namespace\"})",
+          "legendFormat": "EPP queue p{{priority}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kserve_vllm:num_requests_waiting{namespace=\"$namespace\"})",
+          "legendFormat": "vLLM waiting (FCFS)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Dispatched req/s by priority and pool saturation",
+      "description": "Request throughput per priority; saturation (right axis) is the detector output (>=1 means saturated).",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p100.*|.*p100$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^p0.*|.*p0$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "saturation"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (priority)(rate(llm_d_epp_request_total{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "p{{priority}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(llm_d_epp_flow_control_pool_saturation{namespace=\"$namespace\"})",
+          "legendFormat": "saturation",
           "refId": "B"
         }
       ]
