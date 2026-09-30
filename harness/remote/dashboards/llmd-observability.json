@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 15,
+  "version": 16,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -1834,6 +1834,155 @@
         {
           "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
           "legendFormat": "TTFT p95 - all pods",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "type": "row",
+      "title": "Canary (scenario 29)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 175
+      },
+      "panels": []
+    },
+    {
+      "id": 48,
+      "type": "timeseries",
+      "title": "Requests/s by version",
+      "description": "Traffic each version (LLMInferenceService) receives. Follows the route weights.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 176
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (version)(label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"version\", \"$1\", \"pod\", \"(.+)-kserve-[a-z0-9]+-[a-z0-9]{5}\"))",
+          "legendFormat": "req/s - {{version}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 49,
+      "type": "timeseries",
+      "title": "Traffic share by version",
+      "description": "Measured share per version; compare with the configured weights (90:10, 50:50, 0:100).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 176
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (version)(label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"version\", \"$1\", \"pod\", \"(.+)-kserve-[a-z0-9]+-[a-z0-9]{5}\")) / scalar(sum(label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"version\", \"$1\", \"pod\", \"(.+)-kserve-[a-z0-9]+-[a-z0-9]{5}\")))",
+          "legendFormat": "share - {{version}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 50,
+      "type": "timeseries",
+      "title": "TTFT p50 by version",
+      "description": "Latency per version: does the new version (v2) behave like v1?",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 184
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(histogram_quantile(0.5, sum by (le, pod)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m]))), \"version\", \"$1\", \"pod\", \"(.+)-kserve-[a-z0-9]+-[a-z0-9]{5}\")",
+          "legendFormat": "TTFT p50 - {{version}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Gateway failures (non-2xx)",
+      "description": "Requests lost while weights change. Should stay at 0.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 184
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (response_code)(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m]))",
+          "legendFormat": "HTTP {{response_code}} req/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m])) or on() vector(0)",
+          "legendFormat": "all failures",
           "refId": "B"
         }
       ]

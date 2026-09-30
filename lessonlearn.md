@@ -2,6 +2,15 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-30 — 시나리오 29, EPP 없는 canary
+
+- **route group 가중치는 EPP 없이도 동작한다.** `spec.router.scheduler` 없이 배포한 v1·v2에 같은 `route.group`을 주면, 컨트롤러가
+  HTTPRoute 모델 기반 규칙의 목적지를 워크로드 Service로 두고 가중치를 넣는다. 가중치 90:10/50:50/0:100에서 실측 비율은
+  91/53/0 %였고 요청 1,508건이 모두 성공하였다. 한 Gateway에 EPP 모델이 2개가 되는 문제를 피하려고 하네스의
+  `scenario29-llmd-canary-up` 기본값을 EPP 없음(`LLMD_SCHEDULER=false`)으로 바꾸었다.
+- **실행 중인 harness.sh를 수정하지 않는다.** bash는 스크립트를 읽어 가며 실행하므로, 실행 중에 파일 앞부분을 바꾸면 명령이 끝난 뒤
+  잘못된 위치를 읽을 수 있다. 실행이 끝난 뒤 수정한다.
+
 ## 2026-09-30 — 시나리오 24, 다중 EPP 재확인
 
 - **다중 InferencePool ext_proc 오배정은 여전하나 증상이 바뀌었다.** VLM(`llmd-s24`)과 `llmd-test`를 EPP와 함께 올리자

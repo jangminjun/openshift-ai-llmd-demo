@@ -45,8 +45,10 @@ flowchart LR
 - EPP는 Pod를 지정만 하고(③), 요청 전달은 Gateway가 한다(④).
 
 **설정.** 토크나이저 Pod는 preset(`baseRefs: v3-5-1-kserve-config-llm-tokenizer`)으로 기동하고, EPP에 `token-producer`를 추가한다.
-`modelName`은 서빙 모델명이 아닌 render 서버의 모델 ID(`/mnt/models/base`)여야 한다. 틀리면 render 호출이 404가 되고
-prefix Scorer가 0점을 주어 캐시 인지 라우팅이 무력화된다.
+`modelName`은 서빙 모델명이 아닌 render 서버의 모델 ID(`/mnt/models/base`)여야 한다. `modelName`이 틀리면 토크나이저 Pod가
+EPP의 토큰화 요청에 404로 응답하고, EPP는 토큰을 받지 못한다. 그러면 `prefix-cache-scorer`가 모든 Pod에 0점을 주므로 EPP는
+캐시가 있는 Pod를 구분하지 못하고 나머지 Scorer만으로 Pod를 고른다. 요청은 성공하지만 같은 문서의 요청이 여러 Pod로 흩어져
+캐시 적중률이 떨어진다. EPP 로그의 `PrefixCacheMatchInfo not found` 건수로 이 상태를 확인한다.
 
 ```yaml
 - type: token-producer

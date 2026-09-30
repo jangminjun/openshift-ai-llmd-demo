@@ -37,7 +37,8 @@
 #   scenario26-llmd-tls                 TLS on vs off (DSC, cluster-wide), restores
 #   scenario27-llmd-scorer-weights      cache-first vs load-first policies x W1/W2/W3
 #   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
-#   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment (needs llmd-test-down first)
+#   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment: v1/v2 behind one route group, weight shift
+#                                       (EPP off by default: LLMD_SCHEDULER=true re-enables it; run llmd-test-down first)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #
 # Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
@@ -127,16 +128,17 @@ echo "  UI: OpenShift console > Observe > Traces (openshift-tempo/llmd-tracing)"
 }
 
 # --- Scenario 29: controlled deployment (route group + weight) ---
-# Needs to be the only EPP-enabled model on the Gateway (multi-InferencePool
-# ext_proc mis-assignment, lessonlearn.md 2026-09-23) -- bring it up last and
-# tear it down before restoring other llm-d models.
+# v1 and v2 are deployed WITHOUT an EPP by default (LLMD_SCHEDULER=false): two EPP models on one
+# Gateway get every route wired to the last-created EPP (lessonlearn.md 2026-09-23 / 2026-09-30),
+# while the route-group weights work on plain workload Services. LLMD_SCHEDULER=true restores the
+# EPP variant (then it must be the only EPP model on the Gateway).
 S29_NS="${LLMD_NAMESPACE:-llmd-s29}"
 cmd_scenario29_llmd_canary_up() {
   LLMD_NAMESPACE="$S29_NS" run_bench --eval "require_single_epp $S29_NS"
   local v w a
   for v in "llmd-v1:${LLMD_V1_WEIGHT:-90}:" "llmd-v2:${LLMD_V2_WEIGHT:-10}:--max-num-seqs=8"; do
     IFS=: read -r n w a <<< "$v"
-    LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" LLMD_REPLICAS=1 LLMD_ROUTE_GROUP=chat LLMD_ROUTE_WEIGHT="$w"       LLMD_EXTRA_VLLM_ARGS="$a" cmd_llmd_deploy_model
+    LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" LLMD_REPLICAS=1 LLMD_ROUTE_GROUP=chat LLMD_ROUTE_WEIGHT="$w"       LLMD_EXTRA_VLLM_ARGS="$a" LLMD_SCHEDULER="${LLMD_SCHEDULER:-false}" cmd_llmd_deploy_model
     LLMD_NAMESPACE="$S29_NS" LLMD_NAME="$n" MAAS_TOKEN_LIMIT="${MAAS_TOKEN_LIMIT:-1000000000}" cmd_maas_register_model
   done
 }
