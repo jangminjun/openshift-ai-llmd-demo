@@ -2,6 +2,14 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-30 — sandbox3925 신규 클러스터 준비
+
+- **Grafana 13 CLI는 작업 디렉터리가 homepath여야 한다.** `grafana cli --homepath /usr/share/grafana admin
+  reset-admin-password`가 `Could not find config defaults`로 실패하였다(`--config` 추가도 무효). `oc exec`에서
+  `cd /usr/share/grafana` 후 실행하도록 `llmd-prereq.sh`를 수정하였다.
+- **DataScienceCluster는 openshift-aws-harness `maas`(RHOAI-Toolkit)가 생성한다.** 데모 `maas.sh`는 `default-dsc`를
+  수정만 하므로, 기본 클러스터의 `maas` 이후에 실행한다. 이 순서에서 MaaS 요청 500은 재현되지 않았다.
+
 ## 2026-09-29 — sandbox3444 신규 클러스터 준비
 
 - **MaaS 인증 전 요청 500 (Authorino TLS 불일치).** odh-model-controller가 생성하는

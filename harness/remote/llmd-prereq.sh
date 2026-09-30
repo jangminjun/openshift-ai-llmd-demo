@@ -165,8 +165,11 @@ if [ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
     -p "{\"stringData\":{\"GF_SECURITY_ADMIN_PASSWORD\":\"${GRAFANA_ADMIN_PASSWORD}\"}}" >/dev/null
   oc rollout restart "deploy/${GRAFANA_NAME}-deployment" -n "$MONITORING_NAMESPACE" >/dev/null
   oc rollout status "deploy/${GRAFANA_NAME}-deployment" -n "$MONITORING_NAMESPACE" --timeout=300s >/dev/null
+  # Grafana 13+ CLI ignores --homepath and fails with "Could not find config defaults"
+  # unless the working directory is the homepath.
   oc exec -n "$MONITORING_NAMESPACE" "deploy/${GRAFANA_NAME}-deployment" -c grafana -- \
-    grafana cli --homepath /usr/share/grafana admin reset-admin-password "$GRAFANA_ADMIN_PASSWORD" >/dev/null
+    sh -c 'cd /usr/share/grafana && grafana cli --config=/etc/grafana/grafana.ini admin reset-admin-password "$1"' \
+    _ "$GRAFANA_ADMIN_PASSWORD" >/dev/null
   ok "Grafana admin password set (GRAFANA_ADMIN_PASSWORD)"
 fi
 
