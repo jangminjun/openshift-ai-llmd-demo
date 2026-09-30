@@ -2,7 +2,14 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
-## 2026-09-30 — 시나리오 21~23 재수행
+## 2026-09-30 — 시나리오 24, 다중 EPP 재확인
+
+- **다중 InferencePool ext_proc 오배정은 여전하나 증상이 바뀌었다.** VLM(`llmd-s24`)과 `llmd-test`를 EPP와 함께 올리자
+  `maas-default-gateway`의 모든 경로(64개)가 마지막 생성 모델의 EPP(`llmd-test-epp-service`)로 연결되었다. VLM 요청은
+  `llmd-test` EPP를 거쳤으나 503 없이 VLM Pod에서 성공하였고, 멀티모달 캐시 적중률만 76.5 %에서 69.0 %로, TTFT p50은
+  0.26 s에서 0.52 s로 나빠졌다. 오류가 없어 발견이 어려우므로 MaaS Gateway당 EPP 모델 1개 원칙을 유지한다.
+  InferencePool 클러스터의 LB는 `override_host`(EPP 지정 Pod) + fallback `round_robin`이다. 잘못된 EPP가 지정한
+  1.5B Pod는 VLM 클러스터에 없으므로 fallback round-robin으로 VLM Pod가 선택되어, 오류 없이 캐시 인지만 사라진다.
 
 - **`kserve_http_requests_total`이 수집되지 않는다(RHOAI 3.5.1).** 대시보드 `Throughput`·`Error Rate` 패널이 항상
   비어 있었고, 오류율 알림도 발화할 수 없었다. 패널은 MaaS Gateway의 `istio_requests_total`(응답 코드, response flag)로,

@@ -1,96 +1,109 @@
-# 시나리오 25: 엔드-투-엔드 분산 트레이싱
+# 시나리오 25: 에러 트레이싱
 
 **모듈:** 서빙 및 추론 > 분산 추론 (GA)
-**관련 컴포넌트:** `spec.tracing`, preset `v3-5-1-kserve-config-llm-tracing`, OpenTelemetry Collector, TempoMonolithic
+**관련 컴포넌트:** `spec.tracing`, EPP, vLLM, OpenTelemetry Collector, Tempo, MaaS Gateway
 
 ## 목적
 
-RHOAI 3.5의 네이티브 `spec.tracing` 설정으로 Gateway → EPP → vLLM 전 구간의 span을 하나의 trace로
-수집하고, 구간별 지연과 에러 지점을 식별할 수 있음을 검증한다. 시나리오 13(vLLM 인자 방식, 부분 실측)의
-GA 방식 재검증이다.
+실패한 요청을 trace로 찾고 실패 지점을 식별할 수 있는지 검증한다. 정상 요청의 구간 분석은 시나리오 13에서 다루었다.
 
 ## 구성
 
 ```mermaid
 flowchart LR
-    C["클라이언트\n(traceparent 헤더)"] --> GW["Gateway"] --> EPP["EPP"] --> V["vLLM"]
-    GW -.-> OC["OTel Collector"]
-    EPP -.-> OC
+    C["클라이언트<br/>(traceparent)"] --> GW["MaaS Gateway<br/>인증(Authorino)<br/>span 없음"]
+    GW --> EPP["EPP<br/>span: gateway.request 외 4개"]
+    GW --> V["vLLM<br/>span: llm_request"]
+    EPP -.-> OC["OTel Collector"] --> T["Tempo<br/>콘솔 Observe → Traces"]
     V -.-> OC
-    OC --> T["TempoMonolithic\n(Jaeger UI)"]
 ```
 
-preset 기본값: `exporter: otlp`, `exporterEndpoint: http://otel-collector:4317`,
-`sampler: parentbased_traceidratio`, `samplerArg: "0.05"`. 데모에서는 샘플링 비율을 1.0으로 올린다.
+`LLMInferenceService`의 `spec.tracing`을 켜면 컨트롤러가 EPP와 vLLM에 OpenTelemetry 설정을 넣는다. **span**은 trace를 이루는
+작업 하나의 기록(이름, 서비스, 시작 시각, 소요 시간, 속성)이며, 같은 요청의 span은 같은 trace ID로 이어진다.
 
 ## 하네스 실행
 
 ```sh
-./harness.sh tracing && ./harness.sh scenario25-llmd-tracing   # 여유 GPU 1장 필요
+S25_KEEP=true ./harness.sh scenario25-llmd-tracing      # 정상 5건 + 실패 3건, trace 유지(콘솔 확인용)
+TRACING=off ./harness.sh llmd-tracing                   # 확인 후 tracing 끄기
 ```
 
-수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
-
-## 절차
-
-```sh
-./harness.sh tracing                                   # Tempo + OTel 준비 (1회)
-NS=llmd-s26; NAME=llmd-trace
-oc patch llminferenceservice $NAME -n $NS --type=merge -p '{"spec":{"tracing":{
-  "exporter":"otlp","exporterEndpoint":"http://<collector>.<ns>.svc:4317",
-  "sampler":"parentbased_traceidratio","samplerArg":"1.0"}}}'
-oc get pod -n $NS -l app.kubernetes.io/name=$NAME -o jsonpath='{.items[0].spec.containers[0].env}' | grep -i otel
-# 1) 정상 요청 10회 → Jaeger UI에서 service별 span 확인
-# 2) 긴 출력(max_tokens 1024) 요청 → decode 구간 span 비중 확인
-# 3) 오류 요청(존재하지 않는 model, 컨텍스트 초과) → 에러 span 위치 확인
-```
+| 요청 | 방법 |
+|---|---|
+| 정상 | 짧은 프롬프트, `max_tokens` 64 |
+| 실패 ① 요청 검증 | `max_tokens` 99999 (컨텍스트 한도 초과) |
+| 실패 ② 없는 모델 | `model: no-such-model` |
+| 실패 ③ 인증 | 잘못된 API 키 |
 
 ## 판정 기준
 
 | 지표 | 통과 조건 |
 |---|---|
-| trace 연결성 | 한 요청의 Gateway/EPP/vLLM span이 동일 trace ID로 연결 |
-| 구간 지연 | EPP 스케줄링 시간, vLLM 큐/prefill/decode 시간 식별 가능 |
-| 에러 추적 | 거부 요청의 실패 지점(span status=error) 식별 가능 |
+| 실패 요청의 trace | 실패 여부와 실패 지점을 trace에서 식별 가능 |
 
-## 실측 결과 (2026-09-23, RHOAI 3.5.1, Qwen2.5-1.5B-Instruct, T4 × 2, MaaS Gateway 경유)
+## 결과 (2026-09-30, Qwen2.5-1.5B-Instruct, MaaS Gateway 경유)
 
-**통과(정상 요청). 오류 추적은 부분적.**
+**미통과.** 실패 요청은 trace에 오류로 표시되지 않았다. 실패 지점은 Gateway access log로만 식별되었다.
 
-`spec.tracing` 한 번의 설정으로 컨트롤러가 두 컴포넌트에 OTel 설정을 주입하였다. OTel Collector 없이
-Tempo distributor(`tempo-llmd-tracing-distributor.openshift-tempo.svc:4317`)로 직접 수신된다.
+| 요청 | HTTP | 응답 주체 (access log) | trace에 남은 span | 오류 표시 |
+|---|---|---|---|---|
+| 정상 | 200 | vLLM | EPP 5개 + **vLLM `llm_request`** (큐·prefill·decode 시간) | - |
+| ① 요청 검증 | 400 | vLLM | EPP 5개 (58 ms) | 없음 |
+| ② 없는 모델 | 404 | vLLM | EPP 5개 (25 ms) | 없음 |
+| ③ 인증 | 403 | Gateway (MaaS 인증) | EPP 5개 (11 ms) | 없음 |
 
-| 컴포넌트 | 서비스 이름 | 주입 내용 |
-|---|---|---|
-| vLLM | `inference-server-decode` | `OTEL_*` 환경변수, `--otlp-traces-endpoint`, `--collect-detailed-traces` |
-| EPP | `inference-scheduler` | `OTEL_*` 환경변수, `--tracing=true` |
+![trace ID 검색 결과](images/25/trace-search.png)
 
-정상 요청 trace(클라이언트 `traceparent` 전달, 동일 trace ID로 연결):
+*그림 1. 콘솔 Observe → Traces에서 4개 trace ID를 OR 조건으로 검색. 정상 요청(424 ms, 6 spans)만
+`inference-server-decode`(vLLM) span을 가지며, 실패 3건(57 ms, 24 ms, 10 ms)은 `inference-scheduler`(EPP) span 5개뿐이고
+오류 표시가 없다.*
+
+![정상 요청 trace](images/25/trace-ok.png)
+
+*그림 2. 정상 요청 trace(424 ms). EPP의 Pod 선택(`run_scheduler_profile` 54 µs, `pick_endpoints` 10 µs) 뒤에 vLLM
+`llm_request`(378 ms)가 이어진다. 실패 요청에는 마지막 `llm_request` 줄이 없다.*
+
+**vLLM span이 없는 이유.** vLLM은 추론 엔진이 요청 처리를 마칠 때 `llm_request` span을 만든다. 400·404는 그 전 단계인
+HTTP API 서버의 모델 확인·요청 검증에서 거절되어 span이 생성되지 않는다(vLLM 로그에는 400·404가 기록됨). 403은 Gateway
+인증에서 거절되어 vLLM에 도달하지 않았다.
 
 ```
-+0.0ms   2893.5ms  inference-scheduler      gateway.request
-+0.1ms      0.3ms  inference-scheduler      gateway.request_orchestration
-+0.2ms      0.1ms  inference-scheduler      run_scheduler_profile
-+0.2ms      0.0ms  inference-scheduler      filter_endpoints
-+0.3ms      0.0ms  inference-scheduler      pick_endpoints        candidate_endpoints=2
-+46.5ms  2842.0ms  inference-server-decode  llm_request
+vLLM:  HTTP 수신 → ① 모델 확인(404) → ② 요청 검증(400) → ③ 추론 엔진: 큐 → prefill → decode → 완료 시 span 생성
 ```
 
-`llm_request` span 속성으로 구간별 지연이 분해된다: `gen_ai.latency.time_in_queue`,
-`time_in_model_prefill`, `time_in_model_decode`, `time_to_first_token`, `gen_ai.usage.prompt_tokens`/`completion_tokens`.
-`pick_endpoints`에는 후보 수와 선택 endpoint(`llm_d.epp.picker.top_endpoints`)가 기록된다.
+**오류 표시가 없는 이유.** 최종 HTTP 응답 코드를 span에 기록하는 구성 요소가 없다. EPP는 Pod 선택까지만 관여하고,
+Gateway(Envoy)는 span을 만들지 않는다.
 
-오류 요청(`max_tokens` 초과, HTTP 400)의 trace는 EPP span 5개만 존재하였고(39ms), vLLM span과 오류 상태
-태그는 없었다. 요청 검증 단계에서 거부된 요청은 "vLLM span 부재"로만 간접 식별된다.
+**인증 실패 요청도 EPP를 거친다.** 잘못된 API 키 요청이 403으로 거절되기 전에 EPP가 요청을 받아 Pod를 선택하였다.
+EPP 호출이 인증 판정보다 먼저 실행되는 것으로 보인다(필터 순서는 미확인).
 
-## 운영상 유의 사항
+## Gateway tracing 검토
 
-- Gateway(Envoy)와 MaaS 인증(Authorino) 구간은 trace에 포함되지 않는다. 인증 지연(시나리오 23의 200ms
-  타임아웃)은 trace로 관측할 수 없다.
-- 조회는 콘솔 Observe → Traces(`openshift-tempo/llmd-tracing`, tenant `llmd`)에서 한다. 하네스는 Tempo gateway를
-  reader SA 토큰으로 조회한다(`tempo_trace`). 구성은 [README 트레이싱](../../README.md#트레이싱)을 따른다.
-- 샘플링 비율 기본값은 0.05(preset)이며 데모에서는 `samplerArg: "1.0"`을 사용한다.
+Gateway가 span을 만들면 응답 코드와 오류가 trace에 표시된다. 그러나 이 Gateway의 Istio(`istiod-openshift-gateway`)는
+OpenShift Ingress operator가 관리(`managed-by: sail-library`)하며, mesh 설정에 tracing 수신처(`extensionProviders`)가 없다.
+`Telemetry` 리소스로 켜려면 operator 관리 설정을 바꿔야 하므로 지원되는 방법이 없다(조회만 수행, 변경하지 않음).
 
-## 검증 필요 사항
+## 운영 가이드
 
-- P/D 분리 구성(prefill/decode 별도 pod)에서 prefill span 분리 여부
+| 이슈 내역 | 도구 |
+|---|---|
+| 요청이 느린 이유 (큐, prefill, decode) | trace (시나리오 13) |
+| 요청이 실패했는지, 어디서 실패했는지 | Gateway access log (응답 코드, `via_upstream` 여부, 도착 Pod) |
+| 실패 추이 | Grafana `Gateway failures by cause` |
+| 실패 요청의 trace | vLLM span이 없는 짧은 trace로 추정 (원인은 access log로 확인) |
+
+```sh
+# 실패 요청 (응답 코드 4xx/5xx)
+oc logs -n openshift-ingress <maas-default-gateway Pod> | grep -E '" (4|5)[0-9]{2} '
+```
+
+콘솔 Observe → Traces(`openshift-tempo/llmd-tracing`, tenant `llmd`) 검색 조건:
+
+| 검색 방법 | TraceQL |
+|---|---|
+| 정상 요청 (vLLM 도달) | `{ resource.service.name = "inference-server-decode" && name = "llm_request" }` |
+| 실패 요청 후보 | `{ name = "gateway.request" && duration < 100ms }` |
+| trace ID | `{ trace:id = "<trace-id>" }` |
+
+- 클라이언트가 보낸 `traceparent`의 부모 span은 Tempo에 없으므로 목록에 `<root span not yet received>`가 표시된다.
+- 개선 방안: 실패 추적을 위해 OpenShift Logging으로 access log를 수집하고, Gateway tracing 지원을 Red Hat에 요청한다.

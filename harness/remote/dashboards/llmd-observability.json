@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 11,
+  "version": 13,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -1183,6 +1183,225 @@
           "expr": "sum(rate(istio_requests_total{reporter=\"source\", pod=~\"maas-default-gateway.*\", destination_service_namespace=~\"$namespace|unknown\", response_code!~\"2..\"}[1m])) or on() vector(0)",
           "legendFormat": "all failures",
           "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "Multimodal (scenario 24)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 100
+      },
+      "panels": []
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Multimodal cache hit rate by pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "description": "Share of image inputs whose encoder output was reused (vLLM mm cache). EPP sends a re-requested image to the pod that already encoded it.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 101
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:mm_cache_hits_total{namespace=\"$namespace\"}[1m])) / sum by (pod)(rate(kserve_vllm:mm_cache_queries_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "mm cache hit rate - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Prefix cache hit rate by pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "description": "Share of prompt tokens (image tokens included) served from the prefix cache.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 101
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:prefix_cache_hits_total{namespace=\"$namespace\"}[1m])) / sum by (pod)(rate(kserve_vllm:prefix_cache_queries_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "prefix cache hit rate - pod {{short}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Prompt tokens per request: total vs computed",
+      "description": "The gap between the two lines is what the prefix cache saved. Image tokens are ~1,000 per image.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 109
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kserve_vllm:request_prompt_tokens_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prompt_tokens_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "prompt tokens (text + image) - mean",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kserve_vllm:request_prefill_kv_computed_tokens_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_kv_computed_tokens_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "tokens actually computed - mean",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Prefill time per request (mean)",
+      "description": "Time to process the prompt (image + text). Cache hits skip most of it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 109
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kserve_vllm:request_prefill_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_prefill_time_seconds_count{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "prefill time - mean",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "TTFT p50 / p95",
+      "description": "End effect of multimodal-aware routing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 117
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p50 - all pods",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p95 - all pods",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Requests/s by pod",
+      "description": "Load split across VLM pods.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 117
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(kserve_vllm:request_success_total{namespace=\"$namespace\"}[1m])), \"short\", \"$1\", \"pod\", \".*-([a-z0-9]+)$\")",
+          "legendFormat": "req/s - pod {{short}}",
+          "refId": "A"
         }
       ]
     }

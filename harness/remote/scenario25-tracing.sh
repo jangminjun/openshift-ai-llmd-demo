@@ -13,15 +13,18 @@ KEY=$(maas_key); URL="$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.
 MODEL=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.spec.model.name}')
 hex() { "$PY" -c "import secrets;print(secrets.token_hex($1))"; }
 IDS=""
-send() {  # <max_tokens> <label>
+send() {  # <max_tokens> <label> [model] [api-key]
   local tid; tid=$(hex 16)
-  local c; c=$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$URL" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  local c; c=$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$URL" -H "Authorization: Bearer ${4:-$KEY}" -H 'Content-Type: application/json' \
     -H "traceparent: 00-${tid}-$(hex 8)-01" \
-    -d "{\"model\":\"$MODEL\",\"stream\":true,\"max_tokens\":$1,\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about GPUs ($2)\"}]}")
+    -d "{\"model\":\"${3:-$MODEL}\",\"stream\":true,\"max_tokens\":$1,\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about GPUs ($2)\"}]}")
   echo "  $2 trace=$tid http=$c"; IDS="$IDS $tid:$2"
 }
 for i in $(seq 1 "${S25_REQUESTS:-5}"); do send 64 "req$i"; done
-send 99999 "rejected"          # exceeds max_model_len -> 400
+# failure cases: where does each one stop, and does it leave spans?
+send 99999 "err-max-tokens"                          # exceeds max_model_len -> vLLM request validation
+send 64 "err-unknown-model" "no-such-model"          # model name not served
+send 64 "err-bad-api-key" "" "sk-oai-invalid-key"   # MaaS auth (Authorino) rejects
 
 say "spans (Tempo via gateway)"
 sleep 15
