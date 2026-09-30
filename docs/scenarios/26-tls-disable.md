@@ -1,72 +1,51 @@
-# 시나리오 26: TLS 비활성화 옵션
+# 시나리오 26: 내부 TLS 비활성화
 
 **모듈:** 서빙 및 추론 > 분산 추론 (GA)
-**관련 컴포넌트:** `inferenceservice-config`(`enableLLMInferenceServiceTLS`), EPP/vLLM 인증서, Service Mesh mTLS
+**관련 컴포넌트:** DSC `enableLLMInferenceServiceTLS`, EPP, vLLM
 
 ## 목적
 
-llm-d 내부 구간(EPP ↔ vLLM, Gateway ↔ vLLM)의 자체 TLS를 비활성화했을 때, 서비스 메쉬 mTLS가 이미
-적용된 환경에서 이중 암호화 없이 추론이 정상 동작하며 지연·처리량이 개선되는지 측정한다.
+llm-d 내부 구간의 TLS를 끄면 추론 속도가 얼마나 달라지는지 측정한다.
 
-## 설정 위치 (3.5.1 실측)
+1. **Full HTTPS** (기본): 클라이언트 → Gateway와 내부 구간 모두 TLS
+2. **Only Envoy HTTPS**: 클라이언트 → Gateway만 HTTPS, 내부 구간은 평문
 
-기능 설명의 `spec.tls.enabled` 필드는 3.5.1 `LLMInferenceService` CRD에 존재하지 않는다. TLS는
-**DSC의 `spec.components.kserve.enableLLMInferenceServiceTLS`**(클러스터 전역, 기본 true)로 제어된다.
-operator가 이 값을 `inferenceservice-config` ConfigMap(Kserve 컴포넌트 소유)에 반영하고, preset 템플릿이
-`.GlobalConfig.EnableTLS`에 따라 vLLM `--ssl-*` 인자, readiness probe scheme, EPP `--secure-serving`을 결정한다.
-ConfigMap을 직접 수정하면 operator가 되돌리므로 DSC를 수정한다.
+## 구성
+
+```mermaid
+flowchart LR
+    C["클라이언트"] -->|"HTTPS (변경 없음)"| GW["MaaS Gateway<br/>(Envoy)"]
+    GW -->|"TLS on/off"| EPP["EPP"]
+    GW -->|"HTTPS ↔ HTTP"| V["vLLM × 2"]
+    EPP -->|"메트릭 수집<br/>HTTPS ↔ HTTP"| V
+```
+
+클러스터 전역 설정 하나로 EPP와 vLLM이 함께 바뀌며, 변경 시 모든 `LLMInferenceService`가 재시작된다.
+
 ```sh
 oc patch dsc default-dsc --type=merge -p '{"spec":{"components":{"kserve":{"enableLLMInferenceServiceTLS":false}}}}'
-oc get cm inferenceservice-config -n redhat-ods-applications -o jsonpath='{.data.ingress}' | grep LLMInferenceServiceTLS
 ```
-**주의:** 전역 설정이므로 모든 `LLMInferenceService`가 재기동된다. 인라인 EPP 설정에 `metrics-data-source`
-`scheme: https`를 명시한 경우 `http`로 함께 변경해야 EPP가 vLLM 메트릭을 수집한다.
 
 ## 하네스 실행
 
 ```sh
-./harness.sh scenario26-llmd-tls                     # 클러스터 전역, 종료 시 원복. 여유 GPU 1장 필요
+./harness.sh scenario26-llmd-tls        # 1) 측정 → 2)로 전환 → 측정 → 원복 (약 25분)
 ```
 
-수동 절차는 아래와 같으며, 하네스 명령은 동일 절차를 수행하고 설정을 원복한다.
+부하: 동시성 16, 출력 128 토큰, 120초, 구성별 2회, MaaS Gateway 경유.
 
-## 절차
+## 결과 (2026-09-30, Qwen2.5-1.5B-Instruct, A10G × 2)
 
-```sh
-NS=llmd-s27; NAME=llmd-tls
-# 1) TLS on 기준선: 동시성 8, 90초 부하 → 처리량, TTFT/E2E p50/p95 기록
-oc get deploy -n $NS ${NAME}-kserve -o jsonpath='{.spec.template.spec.containers[0].args}' | grep -o 'ssl[^ ]*'
-# 2) TLS off 전환
-oc patch cm inferenceservice-config -n redhat-ods-applications --type=merge -p '{"data":{"ingress":"<enableLLMInferenceServiceTLS=false로 수정한 JSON>"}}'
-oc rollout restart deploy -n $NS
-# 3) 동일 부하 재측정, EPP 인자(--secure-serving=false)와 vLLM 인자(ssl 미사용) 확인
-# 4) (선택) 네임스페이스에 Service Mesh mTLS 적용 후 2)~3) 반복
-# 5) 원복: enableLLMInferenceServiceTLS=true
-```
+**차이 없음.** 모든 지표의 변화가 2 % 이내로 측정 오차 범위이다.
 
-## 판정 기준
-
-| 지표 | 통과 조건 |
-|---|---|
-| 기능 | TLS off에서 추론 요청 성공률 100% |
-| 설정 반영 | EPP `--secure-serving=false`, vLLM TLS 인자 제거 확인 |
-| 성능 | TLS off 시 E2E 지연 감소 또는 동등 (차이 수치 기록) |
-
-## 실측 결과 (2026-09-23, RHOAI 3.5.1, Qwen2.5-1.5B-Instruct, T4 × 2, `max-num-seqs=4`, MaaS Gateway 경유)
-
-**통과(기능). 성능 이득은 소폭.** 부하: 동시성 16, 출력 128 토큰, 120초, 조건별 2회.
-
-| 지표 | TLS on (1회 / 2회) | TLS off (1회 / 2회) | 평균 변화 |
+| 지표 | 1) Full HTTPS (1회 / 2회) | 2) Only Envoy HTTPS (1회 / 2회) | 평균 변화 |
 |---|---|---|---|
-| 처리량 | 10.71 / 11.12 rps | 11.22 / 11.53 rps | +3.5% |
-| TTFT p50 | 0.753 / 0.730 s | 0.729 / 0.729 s | −1.6% |
-| E2E p50 | 1.414 / 1.396 s | 1.371 / 1.370 s | −2.4% |
-| 설정 반영 | vLLM `--ssl-certfile/keyfile/refresh`, probe HTTPS | ssl 인자 제거, probe HTTP | |
+| 처리량 | 19.14 / 18.86 req/s | 18.87 / 19.05 req/s | −0.2 % |
+| TTFT p50 | 0.436 / 0.453 s | 0.447 / 0.450 s | +0.9 % |
+| TTFT p95 | 0.639 / 0.866 s | 0.649 / 0.834 s | −1.5 % |
+| E2E p50 | 0.826 / 0.845 s | 0.834 / 0.836 s | −0.1 % |
+| E2E p95 | 1.037 / 1.274 s | 1.044 / 1.227 s | −1.7 % |
 
-- DSC 변경 후 ConfigMap 반영 약 30초, 워크로드 롤링 재기동 약 5분.
-- 병목이 GPU 연산이므로 내부 구간 TLS 제거 효과는 3% 내외였다.
-- 측정 후 기본값(TLS on)으로 복구하였다(`oc patch dsc ... --type=json -p '[{"op":"remove",...}]'`).
-
-## 검증 필요 사항
-
-- 클러스터에 Service Mesh(사이드카/ambient) 미설치 — mTLS와의 이중 암호화 제거 효과는 설치 후 측정
+- 2)에서 vLLM ssl 인자 제거, probe HTTP, EPP `--secure-serving=false`로 바뀐 것을 확인하였다.
+- 2) 1회차의 HTTP 500 15건은 부하 시작 순간 MaaS 인증(Authorino) 기한 초과로, TLS와 무관하다(`lessonlearn.md` 2026-09-29).
+- 병목이 GPU 연산이므로 내부 TLS를 꺼도 속도 이득이 없다. 성능 목적으로 끌 이유는 없다.
