@@ -3,7 +3,7 @@
   "uid": "llmd-observability",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 14,
+  "version": 15,
   "refresh": "15s",
   "time": {
     "from": "now-1h",
@@ -1616,6 +1616,225 @@
           "expr": "sum(rate(kserve_vllm:request_queue_time_seconds_sum{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:request_queue_time_seconds_count{namespace=\"$namespace\"}[1m]))",
           "legendFormat": "queue time - mean",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "External tokenizer (scenario 28)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 150
+      },
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "EPP plugin latency p95 by plugin",
+      "description": "Time each EPP plugin adds per request. token-producer = round trip to the external tokenizer.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 151
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, plugin_type)(rate(llm_d_epp_plugin_duration_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "p95 - {{plugin_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "EPP scheduling latency p50 / p95",
+      "description": "End-to-end time the EPP takes to pick a pod.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 151
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le)(rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "scheduling p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "scheduling p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "CPU: tokenizer vs EPP",
+      "description": "Tokenization load moves from the EPP to the separate tokenizer Deployment.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 159
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", pod=~\".*-(tokenizer|router-scheduler)-.*\", container=\"main\"}[1m])), \"comp\", \"$1\", \"pod\", \".*-(tokenizer|router-scheduler)-[a-z0-9]+-[a-z0-9]+\")",
+          "legendFormat": "CPU cores - {{comp}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Memory: tokenizer vs EPP",
+      "description": "Working set of the tokenizer (loads the model tokenizer) and the EPP.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 159
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (pod)(container_memory_working_set_bytes{namespace=\"$namespace\", pod=~\".*-(tokenizer|router-scheduler)-.*\", container=\"main\"}), \"comp\", \"$1\", \"pod\", \".*-(tokenizer|router-scheduler)-[a-z0-9]+-[a-z0-9]+\")",
+          "legendFormat": "memory - {{comp}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Prefix cache hit rate",
+      "description": "Cache-aware routing quality with external vs built-in tokenization.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 167
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kserve_vllm:prefix_cache_hits_total{namespace=\"$namespace\"}[1m])) / sum(rate(kserve_vllm:prefix_cache_queries_total{namespace=\"$namespace\"}[1m]))",
+          "legendFormat": "prefix cache hit rate - all pods",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "TTFT p50 / p95",
+      "description": "End effect on latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_THANOS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 167
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p50 - all pods",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[1m])))",
+          "legendFormat": "TTFT p95 - all pods",
+          "refId": "B"
         }
       ]
     }

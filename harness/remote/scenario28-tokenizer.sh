@@ -36,12 +36,16 @@ loadgen s28 "${W[@]}" DOCS=3 PREFIX_TOKENS=500 REQUESTS=10 CONCURRENCY=2 LABEL=p
 echo "  render responses: $(oc logs -n "$NS" "deploy/${N}-tokenizer" --since=2m | grep -oE '"POST /v1/(chat/)?completions/render[^"]*" [0-9]+' | awk '{print $NF}' | sort | uniq -c | tr '\n' ' ')"
 echo "  prefix-scorer misses: $(oc logs -n "$NS" "deploy/${N}-kserve-router-scheduler" --since=2m | grep -c 'PrefixCacheMatchInfo not found')"
 
-run() {
+SIZES="${S28_SIZES:-1000 3500}"   # document length in words (~1.8 tokens/word): ~1,800 / ~6,300 tokens
+run() {  # <label> <prefix-words>
   local b a s; b=$(pod_counters "$NS")
-  s=$(loadgen s28 "${W[@]}" DOC_OFFSET="$(cold_offset)" LABEL="$1"); sleep 40; a=$(pod_counters "$NS")
+  s=$(loadgen s28 "${W[@]}" PREFIX_TOKENS="$2" DOC_OFFSET="$(cold_offset)" LABEL="$1-$2w"); sleep 40; a=$(pod_counters "$NS")
   report "$s" "$b" "$a"
-  thanos_print "token-producer latency p95 (s)" "histogram_quantile(0.95, sum by (le, plugin_type)(rate(llm_d_epp_plugin_duration_seconds_bucket{namespace=\"$NS\",plugin_type=\"token-producer\"}[5m])))"
+  thanos_print "mean prompt tokens" "sum(increase(kserve_vllm:request_prompt_tokens_sum{namespace=\"$NS\"}[2m])) / sum(increase(kserve_vllm:request_prompt_tokens_count{namespace=\"$NS\"}[2m]))"
+  thanos_print "token-producer p95 (s)" "histogram_quantile(0.95, sum by (le)(rate(llm_d_epp_plugin_duration_seconds_bucket{namespace=\"$NS\",plugin_type=\"token-producer\"}[2m])))"
+  thanos_print "EPP scheduling p95 (s)" "histogram_quantile(0.95, sum by (le)(rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace=\"$NS\"}[2m])))"
+  thanos_print "tokenizer CPU max (cores)" "max_over_time(sum(rate(container_cpu_usage_seconds_total{namespace=\"$NS\",pod=~\".*-tokenizer-.*\",container=\"main\"}[1m]))[2m:15s])"
 }
-say "4a) external tokenizer"; run external-tokenizer
-say "4b) built-in token estimation"; epp_restore_default "$NS" "$N"; run builtin
+say "4a) external tokenizer"; for sz in $SIZES; do run external "$sz"; done
+say "4b) built-in token estimation"; epp_restore_default "$NS" "$N"; for sz in $SIZES; do run builtin "$sz"; done
 echo "  (tokenizer Deployment kept via baseRefs; EPP back on default config)"
