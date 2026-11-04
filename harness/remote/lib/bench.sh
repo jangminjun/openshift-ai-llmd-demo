@@ -177,19 +177,19 @@ epp_set() {
 epp_restore_default() { epp_set "$1" "$2" "$(epp_default "$(tls_scheme)")"; echo "  EPP config restored to default"; }
 vllm_args() { oc get llminferenceservice "$2" -n "$1" -o jsonpath='{.spec.template.containers[0].env[?(@.name=="VLLM_ADDITIONAL_ARGS")].value}'; }
 # set_vllm_flag <ns> <name> <flag> <value|default>: rewrites --<flag>=<value> in VLLM_ADDITIONAL_ARGS
-# ("default" removes it); rolling restart of the workload -> needs one idle GPU.
+# ("default" removes it); rolling restart of the workload -> rollout_begin/rollout_end.
 set_vllm_flag() {
   local ns=$1 n=$2 f=$3 v=$4 cur new idx
   cur=$(vllm_args "$ns" "$n")
   new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}=[0-9]+//")
   [ "$v" = default ] || new="$new --${f}=$v"
   [ "$new" = "$cur" ] && { echo "  vLLM args unchanged ($cur)"; return; }
-  require_free_gpu
+  rollout_begin "$ns" "$n"
   idx=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{range .spec.template.containers[0].env[*]}{.name}{"\n"}{end}' | grep -nx VLLM_ADDITIONAL_ARGS | cut -d: -f1)
   oc patch llminferenceservice "$n" -n "$ns" --type=json \
     -p "[{\"op\":\"replace\",\"path\":\"/spec/template/containers/0/env/$((idx - 1))/value\",\"value\":\"$new\"}]" >/dev/null
   echo "  vLLM args -> $new (rolling restart)"
-  sleep 5; wait_isvc "$ns" "$n"
+  rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"
 }
 set_max_num_seqs() { set_vllm_flag "$1" "$2" max-num-seqs "$3"; }
 # ---------- tracing (spec.tracing -> OTel Collector -> multi-tenant Tempo, see remote/tracing.sh) ----------
@@ -197,15 +197,15 @@ TRACING_NS="${TRACING_NAMESPACE:-openshift-tempo}"
 TRACING_EP="http://llmd-otel-collector.${TRACING_NS}.svc.cluster.local:4317"
 TEMPO_Q="https://tempo-llmd-tracing-gateway.${TRACING_NS}.svc.cluster.local:8080/api/traces/v1/${TEMPO_TENANT:-llmd}/tempo/api"
 # tracing_enable <ns> <name> [sampler-ratio]: the controller injects OTEL_* into vLLM and EPP
-# (rolling restart of the workload -> needs one idle GPU)
+# (rolling restart of the workload -> rollout_begin/rollout_end)
 tracing_enable() {
   local ns=$1 n=$2 r=${3:-1.0}
   oc get svc llmd-otel-collector -n "$TRACING_NS" >/dev/null 2>&1 || die "tracing not installed -- run 'harness.sh tracing'"
   [ "$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.tracing.exporterEndpoint} {.spec.tracing.samplerArg}')" = "$TRACING_EP $r" ] \
     && { echo "  tracing already on -> $TRACING_EP (sampler $r)"; return; }
-  require_free_gpu
+  rollout_begin "$ns" "$n"
   oc patch llminferenceservice "$n" -n "$ns" --type=merge -p "{\"spec\":{\"tracing\":{\"exporter\":\"otlp\",\"exporterEndpoint\":\"$TRACING_EP\",\"sampler\":\"parentbased_traceidratio\",\"samplerArg\":\"$r\"}}}" >/dev/null
-  sleep 5; wait_isvc "$ns" "$n"
+  rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"
   for d in "${n}-kserve" "${n}-kserve-router-scheduler"; do
     oc get deploy "$d" -n "$ns" -o jsonpath="  $d: OTEL_SERVICE_NAME={.spec.template.spec.containers[0].env[?(@.name==\"OTEL_SERVICE_NAME\")].value}{\"\n\"}" 2>/dev/null || true
   done
@@ -214,9 +214,9 @@ tracing_enable() {
 tracing_disable() {
   local ns=$1 n=$2
   [ -n "$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.tracing}')" ] || { echo "  tracing already off"; return; }
-  require_free_gpu
+  rollout_begin "$ns" "$n"
   oc patch llminferenceservice "$n" -n "$ns" --type=json -p '[{"op":"remove","path":"/spec/tracing"}]' >/dev/null
-  sleep 5; wait_isvc "$ns" "$n"; echo "  tracing off (OTEL env removed by controller)"
+  rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"; echo "  tracing off (OTEL env removed by controller)"
 }
 # tempo_get <path>: GET the Tempo API through the multi-tenant gateway (reader SA token, throwaway pod)
 tempo_get() {
@@ -276,6 +276,27 @@ require_free_gpu() {
   done
   [ "$f" -ge 1 ] || die "rolling update needs 1 idle GPU (free: $f). Scale out first:
   oc scale machineset <gpu-machineset> -n openshift-machine-api --replicas=N (+ MachineAutoscaler min/max)"
+}
+# rollout_begin/rollout_end <ns> <name>: wrap a pod-template change of one LLMInferenceService.
+# GPU_ROLLOUT=surge (default): require one idle GPU for the maxSurge=1 rollout.
+# GPU_ROLLOUT=recreate (SNO profile): with no idle GPU, scale to 0 first and restore afterwards
+# (brief outage instead of a rollout that stays Pending forever on a 1-GPU node).
+rollout_begin() {
+  local ns=$1 n=$2
+  ROLLOUT_RESTORE=""
+  if [ "${GPU_ROLLOUT:-surge}" != recreate ] || [ "$(free_gpus)" -ge 1 ]; then require_free_gpu; return; fi
+  ROLLOUT_RESTORE=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.replicas}')
+  echo "  no idle GPU -> recreate: $ns/$n replicas ${ROLLOUT_RESTORE:-1} -> 0 during the change"
+  oc patch llminferenceservice "$n" -n "$ns" --type=merge -p '{"spec":{"replicas":0}}' >/dev/null
+  for _ in $(seq 1 60); do
+    [ "$(oc get pods -n "$ns" -l app.kubernetes.io/component=llminferenceservice-workload --no-headers 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && break
+    sleep 5
+  done
+}
+rollout_end() {
+  [ -n "${ROLLOUT_RESTORE:-}" ] || return 0
+  oc patch llminferenceservice "$2" -n "$1" --type=merge -p "{\"spec\":{\"replicas\":${ROLLOUT_RESTORE}}}" >/dev/null
+  echo "  replicas restored to $ROLLOUT_RESTORE"; ROLLOUT_RESTORE=""
 }
 # require_token_limit <ns> <name> [min]: MaaS 429s silently turn a benchmark into a rate-limit test
 # (hit 2026-09-29: default 100k tokens/h rejected 548/600 requests of scenario 11).

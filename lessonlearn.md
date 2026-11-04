@@ -2,6 +2,25 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-11-04 — sandbox1343(RHDP), Qwen3.8-27B TP 준비
+
+- **Qwen3.8-27B INT4 TP2가 L4에서 기동 중 OOM으로 실패하였다.** 가중치(GPU당 8.5 GiB)는 적재되었으나, 메모리
+  프로파일링에서 멀티모달 인코더 예산(16,384토큰, 최대 크기 이미지 1장)과 CUDA graph(최대 512)가 겹쳐 L4 22 GiB를
+  넘었다. `--limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0`(텍스트 전용), `--gpu-memory-utilization=0.85`,
+  `--max-num-seqs=64`로 해결하였다. KV cache 7.64 GiB, 373,321 토큰을 확보하였다.
+- **`VLLM_ADDITIONAL_ARGS`의 JSON은 깨진다.** RHOAI 템플릿은 인자를 `eval "exec vllm serve ... ${VLLM_ADDITIONAL_ARGS}"`로
+  전개한다. 따옴표 없는 JSON은 큰따옴표가 제거되고 쉼표가 있는 중괄호가 brace expansion으로 펼쳐진다. 점 표기
+  (`--limit-mm-per-prompt.image=0`)를 쓰거나 JSON 값을 작은따옴표로 감싼다(`--kv-transfer-config='{...}'`).
+- **4장짜리 GPU 인스턴스는 AZ 재고가 수시로 바뀐다.** us-east-1a에서 g6.12xlarge, g6.24xlarge, g6e.12xlarge,
+  g5.12xlarge가 모두 `InsufficientInstanceCapacity`로 실패하였고, 1b도 실패하였다. 1c에서 g6.12xlarge 2대를 확보하였다.
+  오류 메시지가 안내하는 AZ도 재고를 보장하지 않으므로, MachineSet을 AZ별로 만들어 1대씩 시험한다. 실패한 Machine은
+  `Provisioning`에 머물며 재시도하므로 `oc logs deploy/machine-api-controllers -c machine-controller`로 원인을 확인한다.
+- **RHOAI의 decode pod 이름에는 "decode"가 없다.** decode pod는 `<name>-kserve-<hash>`, prefill pod는
+  `<name>-kserve-prefill-<hash>`이다. 외부 대시보드의 `.*decode.*` 필터는 비어 있으므로 `llmd-pd-latency` 대시보드의
+  기본값을 이 규칙으로 바꾸었다.
+- **Windows용 `oc.exe`는 `/dev/stdin`을 파일로 열지 못한다.** 외부 MaaS 설정 스크립트의
+  `oc create secret --from-file=KEY=/dev/stdin`이 `/proc/self/fd/0` 오류로 실패하였다. `--from-literal`로 바꾸어 실행하였다.
+
 ## 2026-09-30 — 시나리오 29, EPP 없는 canary
 
 - **route group 가중치는 EPP 없이도 동작한다.** `spec.router.scheduler` 없이 배포한 v1·v2에 같은 `route.group`을 주면, 컨트롤러가

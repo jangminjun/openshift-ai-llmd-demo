@@ -94,6 +94,15 @@ flowchart LR
 
 관측성 테스트케이스 [TC-01~05](docs/test-cases.md)(메트릭 수집·대시보드·알림)는 `./harness.sh llmd-monitoring`으로 구성한다.
 
+### scenarios-2 (RHDP sandbox1343, 하네스 `HARNESS_PROFILE=sno`)
+
+RHOAI 3.5.2, SNO 제어 평면(g6.8xlarge) + GPU 워커 g6.12xlarge(L4 × 4) 2대. 대상 모델은 RedHatAI Qwen3.8-27B(BF16, INT4,
+NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness.sh grafana-dashboard`)로 한다.
+
+| # | 기능 | 검증 내용 | 결과 | 매니페스트 |
+|---|---|---|---|---|
+| 2-01 | [P/D 분리 × 텐서 병렬화](docs/scenarios-2/01-pd-disaggregation.md) | 27B 모델을 TP2/TP4로 나누어 P/D 구성, 정밀도 vs 4비트 양자화 비교 | INT4 TP2 단일 인스턴스 동작 확인(KV 373,321 토큰). P/D 미실행 | `manifests/pd/` |
+
 ## 사전 조건
 
 - OpenShift 4.22, RHOAI 3.5.1(`DataScienceCluster` Ready, KServe Managed), NVIDIA GPU Operator
@@ -111,6 +120,16 @@ oc get nodes -l nvidia.com/gpu.present=true
 ## 재현 방법 (에이전트/사람 공용 실행 절차)
 
 아래 명령은 `harness/` 디렉터리에서 실행한다.
+
+하네스는 클러스터 프로파일(`HARNESS_PROFILE`)에 따라 설정을 나눈다. `aws`(기본)는 openshift-aws-harness로 구축한
+다중 노드 클러스터용이다. `sno`는 [scenarios-2](docs/scenarios-2/)를 수행하는 RHDP 클러스터(sandbox1343, SNO 제어 평면 +
+GPU 워커)용이며, 로컬 `oc login` 세션으로 실행하고 데모 모델을 replicas 1로 배포한다. GPU 2장 이상이 필요한
+시나리오(11, 12, 22, 23, 24, 26, 27, 29)는 GPU가 부족하면 실행을 거부한다.
+
+```sh
+./harness.sh status                                # 다중 노드 클러스터(aws, 기본)
+HARNESS_PROFILE=sno ./harness.sh sno-check         # scenarios-2: 노드·GPU·RHOAI·DSC·오퍼레이터 점검
+```
 
 1. **선행 조건 준비** — UWM, Grafana, CRD·Gateway 점검, 여유 GPU 보고
    ```sh
@@ -224,7 +243,7 @@ URL은 클러스터마다 다르며 `AGENT.md`에 기록한다.
 ```
 harness/
   harness.sh                  진입점 (./harness.sh 로 명령 목록 확인)
-  config.env                  실행 위치(HARNESS_EXEC), bastion, 모델/GPU 기본값
+  config.env                  프로파일 선택(HARNESS_PROFILE), 모델 기본값
   lib.sh                      실행 위치 판별, ssh_bastion/scp_to_bastion (local 모드는 로컬 실행)
   tools/loadgen.py            클러스터 내 부하 생성기 (스트리밍 TTFT/E2E, multi-prefix·multi-turn·image, ignore_eos, 턴 사이 정지)
   remote/lib/bench.sh         공통 함수 (부하 Job, Thanos, pod 카운터, EPP 설정, replica, 추적, Tempo 조회, 사전 점검)
@@ -233,14 +252,20 @@ harness/
   remote/maas*.sh             MaaS 설치(RHOAI 3.5+), 모델 등록·해제, API 키, 점검
   remote/tracing.sh           Tempo(멀티테넌시), OTel Collector, 콘솔 Traces UI
   remote/llmd-*.sh            사전 점검, 모델 배포, 부하, PromQL, 모니터링
-  remote/dashboards/          llmd-observability.json (Grafana, 지연 분해 패널 포함)
+  remote/dashboards/          llmd-observability.json (지연 분해), llmd-pd-latency.json (P/D 구간별 지연)
+  remote/grafana-dashboard.sh dashboards/*.json 을 GrafanaDashboard 로 반영 (grafana-dashboard 명령)
+  remote/sno/sno-check.sh     scenarios-2 클러스터 점검 (sno-check 명령)
+  profiles/                   클러스터 프로파일: aws(기본), sno(scenarios-2)
 docs/
   scenarios/                  11~14(llmd-test), 15~16(설계, 보류), 21~29(llm-d GA, llmd-ga-overview.md)
   scenarios/images/           시나리오별 화면 캡처
+  scenarios-2/                sandbox1343 시나리오 (2-01 P/D 분리 × TP)
   test-cases.md               관측성 테스트케이스 TC-01~05
   test-results-2026-09-07.md  RHOAI 3.4.4 실측 결과
 manifests/
-  llmd-test-llminferenceservice.json   데모 모델 스펙 (llmd-test-up 에서 사용)
+  llmd-test-llminferenceservice.json   데모 모델 스펙 (llmd-test-up 에서 사용, aws 프로파일)
+  sno/                                 데모 모델 스펙 replicas 1 (sno 프로파일)
+  pd/                                  scenarios-2 매니페스트 (Qwen3.8-27B INT4 TP2)
   prometheusrule-llmd-alerts.yaml      TTFT·에러율 알림 규칙
   servicemonitor-llmd.yaml             자동 생성 모니터 사본(참고)
   dsci-observability-patch.yaml        관측성 스택 패치 예시

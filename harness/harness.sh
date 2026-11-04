@@ -1,49 +1,65 @@
 #!/usr/bin/env bash
-# llm-d / MaaS harness for this repo (openshift-ai-llmd-demo). Assumes the
-# base cluster already exists (bastion, OpenShift, GPU nodes, RHOAI,
-# monitoring/logging) -- built separately via openshift-aws-harness
-# (https://github.com/jangminjun/openshift-aws-harness), which stays the
-# generic "install a cluster" tool. This harness only adds what's specific
-# to llm-d testing: MaaS/RHCL, request tracing, model deployment, and the
-# scenarios 11-14 and 21-29 (docs/scenarios/*.md). Idempotent where the
-# underlying remote scripts are idempotent.
+# llm-d / MaaS harness for this repo (openshift-ai-llmd-demo). Assumes the base
+# cluster (OpenShift, GPU, RHOAI) already exists. Two cluster profiles
+# (HARNESS_PROFILE, harness/profiles/<name>.env):
+#   aws  (default) multi-node AWS cluster built by openshift-aws-harness, bastion + GPU MachineSet
+#   sno            scenarios-2 on RHDP sandbox1343: SNO control plane (+ GPU workers), local `oc login` session
+# This harness adds what is specific to llm-d testing: MaaS/RHCL, request tracing,
+# model deployment, and scenarios 11-14 / 21-29 (docs/scenarios/*.md).
 #
 # Usage: ./harness.sh <subcommand> [args]
+#
+# [SNO] Single Node OpenShift (HARNESS_PROFILE=sno)
+#   sno-check                           topology, GPU, OCP/RHOAI versions, DSC, operators, scenario fit by GPU count
+#   sno-enable-features                 run the pinned third-party RHOAI 3.5 SNO "enable all features" script
+#                                       (SNO_FEATURES_ARGS=--skip-install, SNO_FEATURES_REFRESH=true re-downloads)
+#
+# [Prepare] both profiles
 #   llmd-prereq                         check/prepare llm-d prerequisites (UWM, Grafana, CRD, Gateway, free GPU)
 #   maas                                install RHCL + enable MaaS (RHOAI 3.5+: DSC aigateway.modelsAsAService)
+#   tracing                             RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic + console Traces UI
+#   status                              LLMInferenceServices, GPU nodes, Gateways, MaaS limits, tracing
+#
+# [Model] demo model and MaaS registration
+#   llmd-test-{down,up}                 remove / apply the demo model (LLMD_MANIFEST; profile default:
+#                                       sno -> manifests/sno/ (replicas 1), aws -> manifests/ (replicas 2))
+#   llmd-deploy-model                   deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
 #   maas-register-model                 register an LLMInferenceService with MaaS (LLMD_NAMESPACE/LLMD_NAME, MAAS_GROUP/MAAS_USERS,
 #                                       MAAS_TOKEN_LIMIT default 1e9/h: benchmarks exceed a realistic per-user quota)
 #   maas-unregister-model               remove an LLMInferenceService from MaaS (LLMD_NAMESPACE/LLMD_NAME)
 #   maas-api-key                        mint a MaaS API key for the oc user -> Secret llmd-bench/loadgen-token (used by llmd-loadgen)
-#   llmd-deploy-model                   deploy one LLMInferenceService (LLMD_NAMESPACE/LLMD_NAME/LLMD_MODEL_URI/...)
+#
+# [Observe] load, metrics, traces
 #   llmd-loadgen                        in-cluster load Job via tools/loadgen.py (LLMD_NAMESPACE/LLMD_NAME or URL/MODEL; see loadgen.py)
 #   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
 #   llmd-monitoring                     PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
-#   tracing                             RHBO(OpenTelemetry) + Tempo Operator + TempoMonolithic + console Traces UI
+#   grafana-dashboard                   publish remote/dashboards/<DASHBOARD>.json as a GrafanaDashboard (default llmd-pd-latency)
 #   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
 #                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
-#   llmd-test-{down,up}                 remove / re-apply the demo model (LLMD_MANIFEST, default manifests/llmd-test-llminferenceservice.json)
-#   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
-#   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
+#   maas-checks                         MAAS_CHECK=nonstream|token-limit
+#
+# [Scenarios] 1 GPU (SNO ok)
 #   scenario13-llmd-tracing             per-request traces: turn 1 cache miss vs turn 2 cache hit (EPP + vLLM spans)
 #   scenario14-llmd-latency             latency diagnosis: queue / prefill / decode bottleneck workloads
 #   scenario21-llmd-flow-control        priority flow control (S21_DETECTOR=concurrency|utilization)
+#   scenario25-llmd-tracing             spec.tracing -> Tempo, prints spans per request
+#   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
+#
+# [Scenarios] 2+ GPUs (refused below that; SKIP_GPU_CHECK=true overrides)
+#   scenario11-llmd-dp-affinity         data parallelism x routing: replica 1 vs 2 (Service / EPP / session affinity)
+#   scenario12-llmd-failure             failure & recovery: kill vLLM (r1, r2) or EPP pod under MaaS traffic
 #   scenario22-llmd-epp-scorers         scorer effects, S22_PARTS="abc kv lru": 1 random/2/4 scorers, 2 KV-full pod
 #                                       avoidance (kv-cache-utilization), 3 new-document placement (no-hit-lru)
-#   scenario23-llmd-lifecycle           zero-downtime rolling update under traffic (any model: LLMD_NAMESPACE/LLMD_NAME,
-#                                       S23_DURATION must cover the rollout; needs 1 idle GPU)
-#   scenario24-llmd-vlm-{up,run,down}   multimodal routing on a VLM (needs llmd-test-down first)
-#   scenario25-llmd-tracing             spec.tracing -> Tempo, prints spans per request
+#   scenario23-llmd-lifecycle           zero-downtime rolling update under traffic (needs 1 idle GPU next to the model)
+#   scenario24-llmd-vlm-{up,run,down}   multimodal routing on a VLM, replicas 2 (needs llmd-test-down first)
 #   scenario26-llmd-tls                 TLS on vs off (DSC, cluster-wide), restores
 #   scenario27-llmd-scorer-weights      cache-first vs load-first policies x W1/W2/W3
-#   scenario28-llmd-tokenizer           external tokenizer (vllm render) vs built-in
 #   scenario29-llmd-canary-{up,weights,shift,down}  controlled deployment: v1/v2 behind one route group, weight shift
 #                                       (EPP off by default: LLMD_SCHEDULER=true re-enables it; run llmd-test-down first)
-#   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #
-# Config: harness/config.env (exec mode, bastion IP, SSH key, model/GPU
-# defaults). HARNESS_EXEC=local runs remote/*.sh on this machine against the
-# current `oc login` session (no bastion needed). Cluster access: ../AGENT.md.
+# Config: harness/config.env + harness/profiles/<HARNESS_PROFILE>.env (exec mode,
+# bastion, GPU type, demo manifest, GPU_ROLLOUT). HARNESS_EXEC=local runs remote/*.sh
+# on this machine against the current `oc login` session. Cluster access: ../AGENT.md.
 set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +73,7 @@ MONITORING_NAMESPACE="${MONITORING_NAMESPACE:-gpu-monitoring}"
 # and pass through every scenario/loadgen/MaaS variable that is set.
 run_bench() {
   local envs="" v src
-  for v in $(compgen -v | grep -E '^(S[12][0-9]_[A-Z0-9_]+|LLMD_[A-Z_]+|LOADGEN_[A-Z_]+|MAAS_[A-Z_]+|ALLOW_MULTI_EPP|TRACING_NAMESPACE|URL|MODEL|CONCURRENCY|REQUESTS|DURATION|INTERVAL|MAX_TOKENS|PROMPT_MODE|PREFIX_TOKENS|DOCS|DOC_OFFSET|DOC_ORDER|IMAGE_URLS|HEADERS|LABEL|TIMEOUT|TIMELINE|SESSIONS|TURNS|SESSION_HEADER|PAUSE_AFTER_TURN|PAUSE_SECONDS)$'); do
+  for v in $(compgen -v | grep -E '^(S[12][0-9]_[A-Z0-9_]+|LLMD_[A-Z_]+|LOADGEN_[A-Z_]+|MAAS_[A-Z_]+|ALLOW_MULTI_EPP|GPU_ROLLOUT|TRACING_NAMESPACE|URL|MODEL|CONCURRENCY|REQUESTS|DURATION|INTERVAL|MAX_TOKENS|PROMPT_MODE|PREFIX_TOKENS|DOCS|DOC_OFFSET|DOC_ORDER|IMAGE_URLS|HEADERS|LABEL|TIMEOUT|TIMELINE|SESSIONS|TURNS|SESSION_HEADER|PAUSE_AFTER_TURN|PAUSE_SECONDS)$'); do
     [ -n "${!v:-}" ] && envs="$envs $v=$(printf '%q' "${!v}")"
   done
   ssh_bastion "mkdir -p ~/ocp-install"
@@ -69,6 +85,42 @@ run_bench() {
 cmd="${1:-}"
 [ -n "$cmd" ] && shift || true
 case "$cmd" in ""|help|-h|--help) ;; *) resolve_exec_mode ;; esac
+
+# Minimum allocatable GPUs per subcommand (replicas 2, two models, or a spare GPU for a rollout).
+SNO_GPU_NEEDS="scenario11-llmd-dp-affinity:2 scenario12-llmd-failure:2 scenario22-llmd-epp-scorers:2 \
+scenario23-llmd-lifecycle:2 scenario24-llmd-vlm-up:2 scenario26-llmd-tls:2 scenario27-llmd-scorer-weights:2 \
+scenario29-llmd-canary-up:2"
+gpu_total() {
+  ssh_bastion "${KCFG_INIT} oc get nodes -l nvidia.com/gpu.present=true -o jsonpath='{.items[*].status.allocatable.nvidia\\.com/gpu}'" \
+    | tr ' ' '\n' | awk '{s+=$1} END{print s+0}'
+}
+need_gpus() {
+  local e need="" total
+  for e in $SNO_GPU_NEEDS; do [ "${e%%:*}" = "$1" ] && need=${e#*:}; done
+  [ -n "$need" ] && [ "${SKIP_GPU_CHECK:-false}" != true ] || return 0
+  total=$(gpu_total)
+  [ "$total" -ge "$need" ] || err "$1 needs $need GPUs, cluster has $total (profile $HARNESS_PROFILE). Add a GPU node or set SKIP_GPU_CHECK=true."
+}
+case "$cmd" in ""|help|-h|--help) ;; *) need_gpus "$cmd" ;; esac
+
+# --- SNO ---
+cmd_sno_check() {
+  log "profile=$HARNESS_PROFILE manifest=$LLMD_MANIFEST GPU_ROLLOUT=${GPU_ROLLOUT:-surge}"
+  ssh_bastion "SNO_GPU_NEEDS='$SNO_GPU_NEEDS' GPU_ROLLOUT='${GPU_ROLLOUT:-surge}' bash -s" < ./remote/sno/sno-check.sh
+}
+# Third-party script (not part of this repo): downloaded once from the pinned URL into
+# harness/.cache/, then run as a file rather than piped to stdin.
+cmd_sno_enable_features() {
+  local f="$HARNESS_DIR/.cache/sno-enable-all-features-35.sh"
+  mkdir -p "$HARNESS_DIR/.cache"
+  if [ ! -s "$f" ] || [ "${SNO_FEATURES_REFRESH:-false}" = true ]; then
+    log "download ${SNO_FEATURES_SCRIPT_URL:?set SNO_FEATURES_SCRIPT_URL (profiles/sno.env)}"
+    curl -fsSL "$SNO_FEATURES_SCRIPT_URL" -o "$f"
+  fi
+  log "run $(basename "$f") ${SNO_FEATURES_ARGS:-} (sha256 $(sha256sum "$f" | cut -c1-12))"
+  scp_to_bastion "$f" "~/ocp-install/sno-enable-all-features-35.sh"
+  ssh_bastion "${KCFG_INIT} bash ~/ocp-install/sno-enable-all-features-35.sh ${SNO_FEATURES_ARGS:-}"
+}
 
 cmd_llmd_prereq() {
   ssh_bastion "MONITORING_NAMESPACE='$MONITORING_NAMESPACE' GRAFANA_ADMIN_PASSWORD='${GRAFANA_ADMIN_PASSWORD:-}' bash -s" < ./remote/llmd-prereq.sh
@@ -116,6 +168,14 @@ cmd_llmd_monitoring() {
     bash -s" < ./remote/llmd-monitoring.sh
 }
 
+cmd_grafana_dashboard() {
+  local f="${DASHBOARD:-llmd-pd-latency}.json"
+  [ -f "./remote/dashboards/$f" ] || err "no remote/dashboards/$f"
+  ssh_bastion "mkdir -p ~/ocp-install"
+  scp_to_bastion "./remote/dashboards/$f" "~/ocp-install/$f"
+  ssh_bastion "DASHBOARD_FILE='$f' DASHBOARD_NAME='${DASHBOARD_NAME:-}' MONITORING_NAMESPACE='$MONITORING_NAMESPACE' bash -s" < ./remote/grafana-dashboard.sh
+}
+
 cmd_tracing() { ssh_bastion 'bash -s' < ./remote/tracing.sh; }
 cmd_llmd_tracing() {
   run_bench --eval 'NS="${LLMD_NAMESPACE:-llmd-test}"; N="${LLMD_NAME:-llmd-test}"
@@ -154,7 +214,7 @@ cmd_scenario29_llmd_canary_down() {
 }
 
 # --- demo model swap (Gateway allows one EPP model: 24/29 need llmd-test down) ---
-LLMD_MANIFEST="${LLMD_MANIFEST:-../manifests/llmd-test-llminferenceservice.json}"
+LLMD_MANIFEST="${LLMD_MANIFEST:-../manifests/llmd-test-llminferenceservice.json}"   # profiles/*.env set it
 cmd_llmd_test_down() {
   ssh_bastion "${KCFG_INIT} oc delete llminferenceservice ${LLMD_NAME:-llmd-test} -n ${LLMD_NAMESPACE:-llmd-test} --ignore-not-found --wait=true"
 }
@@ -162,6 +222,9 @@ cmd_llmd_test_up() {
   ssh_bastion "mkdir -p ~/ocp-install"
   scp_to_bastion "$LLMD_MANIFEST" "~/ocp-install/llmd-model.json"
   run_bench --eval 'require_single_epp "${LLMD_NAMESPACE:-llmd-test}"
+# baseRefs follow the installed RHOAI (v3-5-1-kserve-config-* -> v3-5-2-kserve-config-* ...)
+v=$(oc get llminferenceserviceconfig -n redhat-ods-applications -o name | sed -n "s#.*/\(v[0-9-]*\)-kserve-config-llm-tokenizer\$#\1#p" | head -1)
+[ -z "$v" ] || sed -i -E "s/v[0-9]+-[0-9]+-[0-9]+-kserve-config-/$v-kserve-config-/g" "$HOME/ocp-install/llmd-model.json"
 oc get namespace "${LLMD_NAMESPACE:-llmd-test}" &>/dev/null || oc create namespace "${LLMD_NAMESPACE:-llmd-test}"
 oc apply -f "$HOME/ocp-install/llmd-model.json"; sleep 5
 wait_isvc "${LLMD_NAMESPACE:-llmd-test}" "${LLMD_NAME:-llmd-test}"
@@ -248,6 +311,7 @@ case "$cmd" in
   maas-checks)                        cmd_maas_checks ;;
   llmd-deploy-model)                  cmd_llmd_deploy_model ;;
   llmd-monitoring)                    cmd_llmd_monitoring ;;
+  grafana-dashboard)                  cmd_grafana_dashboard ;;
   llmd-loadgen)                       cmd_llmd_loadgen ;;
   llmd-promql)                        cmd_llmd_promql ;;
   tracing)                            cmd_tracing ;;
@@ -257,6 +321,8 @@ case "$cmd" in
   scenario13-llmd-tracing)            cmd_scenario13 ;;
   scenario14-llmd-latency)            cmd_scenario14 ;;
   status)                             cmd_status ;;
+  sno-check)                          cmd_sno_check ;;
+  sno-enable-features)                cmd_sno_enable_features ;;
   ""|help|-h|--help)                  sed -n '/^# Usage:/,/^# Config:/p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
   *)
     err "Unknown subcommand '$cmd'. Run ./harness.sh help for the list."
