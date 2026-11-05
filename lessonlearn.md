@@ -2,6 +2,30 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+
+## 2026-11-05 — scenarios-2 P/D (RHDP sandbox1343, RHOAI 3.5.2)
+
+- **하이브리드 모델 P/D는 `VLLM_SSM_CONV_STATE_LAYOUT=DS`가 필요하다.** Qwen3.8(linear attention 층 포함)은 conv 상태도
+  NIXL로 넘기며, 이 값이 없으면 prefill이 기동 시 `Mamba conv transfer requires DS conv state layout`으로 실패한다.
+- **NIXL side channel 기본 주소 `localhost`는 pod 간 P/D에서 KV 전달을 전부 실패시킨다.** decode가 자기 NIXL agent에
+  접속해 `Remote NIXL agent engine ID mismatch`가 나고, decode가 프롬프트를 재계산하여 응답은 200이다. trace와 응답으로는
+  드러나지 않아 `vllm:nixl_num_failed_transfers_total`(decode)과 `vllm:nixl_num_kv_expired_reqs_total`(prefill)로만
+  보인다. RHOAI 3.5.2 템플릿이 지정하지 않으므로 `VLLM_NIXL_SIDE_CHANNEL_HOST`를 `status.podIP`로 넣는다.
+- **EPP는 P/D 설정 이름을 변환한다.** `pd-profile-handler`(`threshold: 0`) → `disagg-profile-handler` +
+  `always-disagg-pd-decider`, `prefill-header-handler` → `disagg-headers-handler`.
+- **ready 판정은 `generation == observedGeneration`과 함께 본다.** spec 변경 직후의 Ready=True는 이전 세대 값이어서,
+  pod가 없을 때 요청을 보내 503을 받았다.
+- **MaaS 한도 실험의 단문 probe는 open-loop여야 한다.** 이전 요청이 끝나야 다음을 보내는 probe는 장문 prefill 뒤에서
+  34초간 대기하여 차단 구간에 요청을 하나도 보내지 못했고, "구독 분리 효과 없음·동시성 효과 없음"이라는 잘못된 결과를
+  냈다(2-08-5, 2-08-6 1차). 1초마다 새 요청을 띄우도록 바꾸었다.
+- **하네스를 강제 종료하면 `trap restore EXIT`가 실행되지 않을 수 있다.** 2-08 실행 중단 후 `llmd-demo-sub` 한도가
+  실험값(5,000/5분)으로 남았다. 중단 후에는 `oc get maassubscription -n models-as-a-service -o jsonpath='{.items[*].spec.modelRefs[*].tokenRateLimits}'`로
+  한도를 확인한다.
+- **Qwen3.8(하이브리드) 모델은 vLLM 0.24에서 prefix 캐시가 기본으로 꺼진다**(`enable_prefix_caching=False`). prefix 캐시를
+  전제로 한 시나리오(2-05, 2-08-2)는 `--enable-prefix-caching`을 명시해야 한다.
+- **로컬 bash 3.2(macOS)와 BSD awk.** 하네스는 로컬 실행 시 `/bin/bash` 3.2를 쓰므로 연관 배열(`declare -A`)과 `$(case ...)`가
+  동작하지 않고, BSD awk는 괄호 없는 삼항 연산(`NR>1?",":""`)을 거부한다.
+
 ## 2026-11-04 — sandbox1343(RHDP), Qwen3.8-27B TP 준비
 
 - **Qwen3.8-27B INT4 TP2가 L4에서 기동 중 OOM으로 실패하였다.** 가중치(GPU당 8.5 GiB)는 적재되었으나, 메모리

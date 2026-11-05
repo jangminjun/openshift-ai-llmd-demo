@@ -1,10 +1,10 @@
-# 시나리오 2-01: Prefill/Decode 분리 × 텐서 병렬화
+# 시나리오 2-00: Prefill/Decode 분리 × 텐서 병렬화 준비 작업
 
 **모듈:** 분산 환경 활용 > 추론 단계 분리
 **환경:** RHDP sandbox1343(SNO 제어 평면), OpenShift 4.20.42, RHOAI 3.5.2(vLLM 0.24.0+rhaiv.15).
 GPU 워커 g6.12xlarge(L4 24GB × 4) 2대. 하네스 프로파일 `HARNESS_PROFILE=sno`
 **모델:** RedHatAI Qwen3.8-27B — BF16, INT4, NVFP4, MXFP4
-**상태:** INT4 TP2 단일 인스턴스 검증 완료. P/D 미실행.
+**상태:** INT4 TP2 단일 인스턴스 검증 완료. P/D 1단계 기동 완료(2026-11-05). 측정은 시나리오 2-02~2-05.
 
 ## 목적
 
@@ -101,20 +101,54 @@ oc get llminferenceserviceconfig -n redhat-ods-applications
 oc explain llminferenceservice.spec.prefill
 ```
 
+## 사전 필요 설정
+
+RHOAI 3.5.2의 P/D 템플릿만으로는 동작하지 않는다. 아래 설정이 없으면 기동 실패하거나, 응답은 200이지만 P/D가 동작하지
+않는다(2026-11-05 확인).
+
+| 설정 | 없을 때 증상 | 원인 | 확인 |
+|---|---|---|---|
+| `VLLM_SSM_CONV_STATE_LAYOUT=DS` (prefill·decode) | prefill 기동 실패: `Mamba conv transfer requires DS conv state layout` | 하이브리드 모델(linear attention 층)의 conv 상태 전달은 DS 형식만 지원 | `oc logs <prefill-pod> -c main \| grep -i 'conv state'` |
+| `VLLM_NIXL_SIDE_CHANNEL_HOST` = `status.podIP` (prefill·decode) | 응답 200이나 KV 전달 전부 실패. decode 로그 `Remote NIXL agent engine ID mismatch`, prefill 로그 `Releasing expired KV blocks` | 기본값 `localhost`. prefill이 handshake 주소로 `localhost`를 알려 decode가 자기 NIXL에 접속한다. decode는 프롬프트를 재계산하여 응답 | decode `vllm:nixl_num_failed_transfers_total`, prefill `vllm:nixl_num_kv_expired_reqs_total`이 0, decode `vllm:nixl_xfer_time_seconds_count` 증가 |
+| `kv_role`: prefill `kv_producer`, decode `kv_consumer` | 경고 `Using kv_role='kv_both' with NixlConnector is deprecated` | `kv_both`는 향후 제거 예정 | vLLM 기동 로그 |
+| `--limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0`, `--gpu-memory-utilization=0.85` | L4 기동 시 CUDA OOM | 비전 인코더 메모리 프로파일링 | vLLM 기동 로그 |
+| `VLLM_ADDITIONAL_ARGS`의 JSON은 작은따옴표로 감쌈 | `--kv-transfer-config` 파싱 오류 | 템플릿이 값을 `eval`로 전개 | vLLM `non-default args` 로그 |
+
+```yaml
+env:
+- name: VLLM_SSM_CONV_STATE_LAYOUT
+  value: DS
+- name: VLLM_NIXL_SIDE_CHANNEL_HOST
+  valueFrom: {fieldRef: {fieldPath: status.podIP}}
+```
+
+**운영상 유의점**
+
+| 항목 | 내용 |
+|---|---|
+| EPP 플러그인 이름 | EPP는 `pd-profile-handler`(`threshold: 0`)를 `disagg-profile-handler` + `always-disagg-pd-decider`로, `prefill-header-handler`를 `disagg-headers-handler`로 변환한다(`oc logs <epp> \| grep 'Effective raw configuration'`) |
+| Gateway당 EPP 모델 1개 | 같은 `maas-default-gateway`에 EPP 모델이 둘이면 모든 경로가 마지막 EPP로 연결된다. P/D 모델을 올리기 전에 다른 EPP 모델을 내린다(`oc get inferencepool -A`) |
+| 설정 변경 | prefill·decode가 한 노드에 고정되어 여유 GPU가 없으므로 롤링 업데이트가 Pending에 머문다. `spec.replicas`와 `spec.prefill.replicas`를 0으로 내렸다가 올린다(하네스는 P/D 모델을 자동으로 이렇게 처리) |
+| 준비 판정 | spec 변경 직후의 Ready=True는 이전 세대 값이다. `metadata.generation == status.observedGeneration`과 Ready를 함께 확인한다 |
+| P/D 동작 판정 | trace와 응답 코드만으로는 KV 전달 성공 여부를 알 수 없다. NIXL 지표로 확인한다(시나리오 2-02) |
+| MaaS 경로 | 모델 등록(`maas-register-model`)과 API 키(`maas-api-key`)가 필요하며, 토큰 한도는 부하 시험에 충분해야 한다 |
+
 ## 미확인 사항
 
 | 항목 | 내용 | 확인 방법 |
 |---|---|---|
 | FP4 커널 | L4(Ada)에는 FP4 하드웨어가 없다. NVFP4·MXFP4의 동작 여부와 커널 | vLLM 기동 로그의 양자화 커널 |
-| 하이브리드 P/D | linear attention 층의 상태가 NIXL로 전달되는지 | 1단계 P/D 응답 |
+| 하이브리드 P/D | **확인됨.** conv 상태 전달(DS 형식)과 KV 전달 성공. 설정은 사전 필요 설정 참조 | 시나리오 2-02 |
 | 노드 내 KV 경로 | 같은 노드의 pod 간 전송이 GPU 직접 전송인지 TCP 우회인지 | prefill·decode 로그의 NIXL/UCX 경로 |
-| EPP 설정 | 플러그인 이름과 `pd-profile-handler` 파라미터(EPP 0.10.0) | EPP 로그의 플러그인 로딩 오류 |
+| EPP 설정 | **확인됨.** EPP는 `prefill-header-handler`·`pd-profile-handler`를 `disagg-headers-handler`·`disagg-profile-handler`로 변환하고, `threshold: 0`을 decider `always-disagg-pd-decider`로 적용한다 | `oc logs <epp> \| grep 'Effective raw configuration'` |
 
 ## 매니페스트 (1단계, INT4)
 
 `<gpu-a>`는 GPU 워커의 노드 이름이다. 2단계(BF16)는 모델 URI를 `hf://RedHatAI/Qwen3.8-27B`로, `tensor`와 GPU 요청을
 4로, prefill과 decode의 노드를 각각 gpu-a와 gpu-b로 바꾼다. `--kv-cache-dtype`은 두 pod에서 같아야 한다.
 텍스트 전용 인자(`--limit-mm-per-prompt.*=0`)와 `--gpu-memory-utilization=0.85`는 L4에서 기동 OOM을 막는다.
+전체 매니페스트는 [manifests/pd/qwen38-int4-pd.yaml](../../manifests/pd/qwen38-int4-pd.yaml)이다. 설정을 바꿀 때는 같은 노드에
+여유 GPU가 없으므로 `spec.replicas`와 `spec.prefill.replicas`를 0으로 내렸다가 올린다(롤링 업데이트는 Pending에 머문다).
 
 ```yaml
 apiVersion: serving.kserve.io/v1alpha2
@@ -134,11 +168,15 @@ spec:
     containers:
     - name: main
       env:
+      - name: VLLM_SSM_CONV_STATE_LAYOUT      # 하이브리드 모델의 conv 상태를 NIXL로 전달
+        value: DS
+      - name: VLLM_NIXL_SIDE_CHANNEL_HOST     # 기본값 localhost이면 KV 수신 handshake 실패
+        valueFrom: {fieldRef: {fieldPath: status.podIP}}
       - name: VLLM_ADDITIONAL_ARGS
         value: >-
           --max-model-len=16384 --gpu-memory-utilization=0.85 --kv-cache-dtype=fp8 --max-num-seqs=64
           --limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0
-          --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+          --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
       resources:
         limits:   {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
         requests: {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
@@ -151,11 +189,15 @@ spec:
       containers:
       - name: main
         env:
+        - name: VLLM_SSM_CONV_STATE_LAYOUT
+          value: DS
+        - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+          valueFrom: {fieldRef: {fieldPath: status.podIP}}
         - name: VLLM_ADDITIONAL_ARGS
           value: >-
             --max-model-len=16384 --gpu-memory-utilization=0.85 --kv-cache-dtype=fp8 --max-num-seqs=64
             --limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0
-            --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+            --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
         resources:
           limits:   {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
           requests: {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
@@ -201,6 +243,53 @@ oc apply -f qwen38-int4-pd.yaml
 oc get llminferenceservice,pods -n llmd-pd
 oc logs deploy/qwen38-int4-pd-kserve-router-scheduler -n llmd-pd | grep -i -E 'plugin|error' | head
 ```
+
+## 관측 구성
+
+### Grafana 대시보드 `llmd-pd-latency`
+
+P/D의 구간별 지연을 한 화면에서 보는 대시보드이다. JSON은
+[harness/remote/dashboards/llmd-pd-latency.json](../../harness/remote/dashboards/llmd-pd-latency.json)이며, Grafana
+인스턴스 `gpu-monitoring/gpu-grafana`와 Thanos 데이터소스(`llmd-prereq`가 구성)를 전제로 한다.
+
+| 행 | 내용 |
+|---|---|
+| 0. Overview | E2E·TTFT·ITL p95, 처리량, EPP 오류율, NIXL 실패, P/D 라우팅 결정 분포, 구간별 p95 비교 |
+| ① Routing & orchestration | EPP 스케줄링 지연, 플러그인별 지연, pool 포화도, 엔드포인트별 큐 |
+| ② Prefill compute | 엔진 연산·큐 대기 시간, sidecar 관측 prefill 지연, prompt TPS, KV·prefix 캐시, GPU 사용률, PCIe 송신 |
+| ③ KV cache transfer | NIXL 전송 시간·대역폭·크기, 실패·만료, 노드 네트워크(ENA), TCP 재전송 |
+| ④ Decode scheduling & compute | ITL, decode측 TTFT, 대기·실행 요청, KV 사용률, preemption, decode TPS, GPU·PCIe 수신 |
+| ⑤ Errors & failures | sidecar 단계별 오류, EPP 오류 코드, 엔드포인트별 NIXL 실패 |
+
+변수는 `datasource`, `namespace`, `prefill_pod`, `decode_pod`, `gpu_node`, `net_dev`이다. 데이터소스를 변수로 받으므로
+UID 치환 없이 `GrafanaDashboard`로 적용한다.
+
+```sh
+jq -n --rawfile dash harness/remote/dashboards/llmd-pd-latency.json '
+  {apiVersion: "grafana.integreatly.org/v1beta1", kind: "GrafanaDashboard",
+   metadata: {name: "llmd-pd-latency", namespace: "gpu-monitoring"},
+   spec: {instanceSelector: {matchLabels: {dashboards: "gpu-grafana"}}, json: $dash}}' | oc apply -f -
+oc get grafanadashboard llmd-pd-latency -n gpu-monitoring       # DashboardSynchronized=True
+oc get route gpu-grafana-route -n gpu-monitoring -o jsonpath='{.spec.host}'   # https://<host>/d/llmd-pd-latency
+```
+
+하네스는 같은 작업을 수행한다(`HARNESS_PROFILE=sno ./harness.sh grafana-dashboard`). 패널 제목과 설명은 영어이며, 쿼리는 TP 수와 무관하다.
+
+### Tempo 추적
+
+요청 경로(EPP → prefill → decode)를 trace로 확인하기 위해 추적을 구성한다. 구성은 [README 트레이싱](../../README.md#트레이싱)과
+같다: vLLM·EPP → OTel Collector `llmd-otel` → 멀티테넌시 TempoMonolithic `llmd-tracing`(tenant `llmd`) → 콘솔
+Observe → Traces.
+
+```sh
+cd harness
+HARNESS_PROFILE=sno ./harness.sh tracing                                                    # Tempo, Collector, 콘솔 UI
+HARNESS_PROFILE=sno LLMD_NAMESPACE=llmd-pd LLMD_NAME=qwen38-int4-pd ./harness.sh llmd-tracing   # spec.tracing 적용
+oc get llminferenceservice qwen38-int4-pd -n llmd-pd -o jsonpath='{.spec.tracing}'
+```
+
+`spec.tracing` 변경은 pod를 다시 만든다. 하네스는 P/D 모델(`spec.prefill` 존재)의 prefill과 decode를 함께 0으로
+내렸다가 올린다. trace에서 확인할 사항(prefill span의 서비스 이름, sidecar의 trace 헤더 전달 여부)은 시나리오 2-02에 기록한다.
 
 ## 측정 설계
 

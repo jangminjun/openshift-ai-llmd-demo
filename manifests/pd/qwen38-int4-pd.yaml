@@ -1,0 +1,104 @@
+# Scenario 2-00, stage 1: Qwen3.8-27B INT4, prefill TP2 + decode TP2 on one g6.12xlarge (L4 x 4),
+# KV cache handed over in-node by NIXL. Needs to be the only EPP-enabled model on maas-default-gateway
+# (delete llmd-pd/qwen38-int4-tp2 first). Node pinned by kubernetes.io/hostname.
+# oc apply -f manifests/pd/qwen38-int4-pd.yaml
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  name: qwen38-int4-pd
+  namespace: llmd-pd
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  model:
+    name: Qwen3.8-27B-INT4
+    uri: hf://RedHatAI/Qwen3.8-27B-INT4
+  replicas: 1                                   # decode
+  parallelism:
+    tensor: 2
+  template:
+    nodeSelector:
+      kubernetes.io/hostname: ip-10-0-81-215.ec2.internal
+    tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+    containers:
+    - name: main
+      env:
+      # Hybrid model (linear-attention / Mamba-style layers): NIXL must also hand over the conv state,
+      # which vLLM 0.24 only supports in the DS layout (prefill fails at startup otherwise).
+      - name: VLLM_SSM_CONV_STATE_LAYOUT
+        value: DS
+      # NIXL side channel must advertise the pod IP: the default "localhost" makes the decode pod
+      # handshake with its own agent ("Remote NIXL agent engine ID mismatch") and every KV pull fails.
+      - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+        valueFrom: {fieldRef: {fieldPath: status.podIP}}
+      - name: VLLM_ADDITIONAL_ARGS
+        # The template evals VLLM_ADDITIONAL_ARGS: keep JSON values single-quoted.
+        value: >-
+          --max-model-len=16384 --gpu-memory-utilization=0.85 --kv-cache-dtype=fp8 --max-num-seqs=64
+          --limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0
+          --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
+      resources:
+        limits:   {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
+        requests: {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
+  prefill:
+    replicas: 1
+    parallelism:
+      tensor: 2
+    template:
+      nodeSelector:
+        kubernetes.io/hostname: ip-10-0-81-215.ec2.internal
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: main
+        env:
+        - name: VLLM_SSM_CONV_STATE_LAYOUT
+          value: DS
+        - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+          valueFrom: {fieldRef: {fieldPath: status.podIP}}
+        - name: VLLM_ADDITIONAL_ARGS
+          value: >-
+            --max-model-len=16384 --gpu-memory-utilization=0.85 --kv-cache-dtype=fp8 --max-num-seqs=64
+            --limit-mm-per-prompt.image=0 --limit-mm-per-prompt.video=0
+            --kv-transfer-config='{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
+        resources:
+          limits:   {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
+          requests: {cpu: "8", memory: 48Gi, nvidia.com/gpu: "2"}
+  router:
+    gateway:
+      refs:
+      - name: maas-default-gateway
+        namespace: openshift-ingress
+    route: {}
+    scheduler:
+      config:
+        inline:
+          apiVersion: llm-d.ai/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+          - type: prefill-header-handler
+          - type: prefill-filter
+          - type: decode-filter
+          - type: prefix-cache-scorer
+          - type: queue-scorer
+          - type: max-score-picker
+          - type: pd-profile-handler
+            parameters:
+              threshold: 0                     # measurement B: 0 vs 1000 (uncached prompt tokens)
+          schedulingProfiles:
+          - name: prefill
+            plugins:
+            - pluginRef: prefill-filter
+            - pluginRef: queue-scorer
+            - pluginRef: max-score-picker
+          - name: decode
+            plugins:
+            - pluginRef: decode-filter
+            - pluginRef: prefix-cache-scorer
+            - pluginRef: queue-scorer
+            - pluginRef: max-score-picker

@@ -6,6 +6,7 @@
 # (TokenReview) per request; the Kuadrant auth call has a 200ms timeout with
 # failureMode=deny, so a slow API server yields sporadic HTTP 500s. API keys
 # are validated by maas-api (cached 60s) instead.
+# KEY_SUBSCRIPTION binds the key to a MaaSSubscription (default: maas-api picks one).
 # Needs a user token (oc whoami -t), so run with HARNESS_EXEC=local.
 set -euo pipefail
 # Bastion: use the installer kubeconfig. Local (HARNESS_EXEC=local): keep the current oc session.
@@ -14,12 +15,13 @@ set -euo pipefail
 KEY_NAME="${KEY_NAME:-llmd-loadgen}"
 KEY_NAMESPACE="${KEY_NAMESPACE:-llmd-bench}"
 KEY_SECRET="${KEY_SECRET:-loadgen-token}"
+KEY_SUBSCRIPTION="${KEY_SUBSCRIPTION:-}"
 USER_TOKEN=$(oc whoami -t 2>/dev/null) || { echo "No user token (oc whoami -t) -- run locally after oc login." >&2; exit 1; }
 MAAS_HOST="maas.$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
 
 resp=$(curl -sk -X POST "https://${MAAS_HOST}/maas-api/v1/api-keys" \
   -H "Authorization: Bearer ${USER_TOKEN}" -H 'Content-Type: application/json' \
-  -d "{\"name\":\"${KEY_NAME}\",\"description\":\"llm-d harness\"}")
+  -d "{\"name\":\"${KEY_NAME}\",\"description\":\"llm-d harness\"${KEY_SUBSCRIPTION:+,\"subscription\":\"$KEY_SUBSCRIPTION\"}}")
 key=$(printf '%s' "$resp" | sed -n 's/.*"key":"\(sk-oai-[^"]*\)".*/\1/p')
 [ -n "$key" ] || { echo "API key creation failed: $resp" >&2; exit 1; }
 printf '%s' "$resp" | sed 's/"key":"sk-oai-[^"]*"/"key":"sk-oai-***"/'; echo

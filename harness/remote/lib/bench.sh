@@ -175,20 +175,29 @@ epp_set() {
   sleep 20   # EPP warms its endpoint/metrics view
 }
 epp_restore_default() { epp_set "$1" "$2" "$(epp_default "$(tls_scheme)")"; echo "  EPP config restored to default"; }
-vllm_args() { oc get llminferenceservice "$2" -n "$1" -o jsonpath='{.spec.template.containers[0].env[?(@.name=="VLLM_ADDITIONAL_ARGS")].value}'; }
-# set_vllm_flag <ns> <name> <flag> <value|default>: rewrites --<flag>=<value> in VLLM_ADDITIONAL_ARGS
-# ("default" removes it); rolling restart of the workload -> rollout_begin/rollout_end.
+# vllm_args <ns> <name> [decode|prefill]: VLLM_ADDITIONAL_ARGS of spec.template or spec.prefill.template
+vllm_args() {
+  local base=.spec.template; [ "${3:-decode}" = prefill ] && base=.spec.prefill.template
+  oc get llminferenceservice "$2" -n "$1" -o jsonpath="{${base}.containers[0].env[?(@.name==\"VLLM_ADDITIONAL_ARGS\")].value}"
+}
+# set_vllm_flag <ns> <name> <flag> <value|on|default> [decode|prefill]: rewrites --<flag>[=<value>] in
+# VLLM_ADDITIONAL_ARGS ("on" = flag without value, "default" removes it); restart via rollout_begin/rollout_end.
 set_vllm_flag() {
-  local ns=$1 n=$2 f=$3 v=$4 cur new idx
-  cur=$(vllm_args "$ns" "$n")
-  new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}=[0-9]+//")
-  [ "$v" = default ] || new="$new --${f}=$v"
-  [ "$new" = "$cur" ] && { echo "  vLLM args unchanged ($cur)"; return; }
+  local ns=$1 n=$2 f=$3 v=$4 role=${5:-decode} cur new patch
+  cur=$(vllm_args "$ns" "$n" "$role")
+  new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}(=[^ ]+)?( |$)/\2/; s/^ //")
+  case $v in default) ;; on) new="$new --${f}" ;; *) new="$new --${f}=$v" ;; esac
+  [ "$new" = "$cur" ] && { echo "  vLLM args ($role) unchanged ($cur)"; return; }
+  patch=$(oc get llminferenceservice "$n" -n "$ns" -o json | "$PY" -c '
+import sys, json
+d, role, new = json.load(sys.stdin), sys.argv[1], sys.argv[2]
+base = "/spec/prefill/template" if role == "prefill" else "/spec/template"
+spec = d["spec"]["prefill"]["template"] if role == "prefill" else d["spec"]["template"]
+i = [e["name"] for e in spec["containers"][0]["env"]].index("VLLM_ADDITIONAL_ARGS")
+print(json.dumps([{"op": "replace", "path": "%s/containers/0/env/%d/value" % (base, i), "value": new}]))' "$role" "$new")
   rollout_begin "$ns" "$n"
-  idx=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{range .spec.template.containers[0].env[*]}{.name}{"\n"}{end}' | grep -nx VLLM_ADDITIONAL_ARGS | cut -d: -f1)
-  oc patch llminferenceservice "$n" -n "$ns" --type=json \
-    -p "[{\"op\":\"replace\",\"path\":\"/spec/template/containers/0/env/$((idx - 1))/value\",\"value\":\"$new\"}]" >/dev/null
-  echo "  vLLM args -> $new (rolling restart)"
+  oc patch llminferenceservice "$n" -n "$ns" --type=json -p "$patch" >/dev/null
+  echo "  vLLM args ($role) -> $new (restart)"
   rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"
 }
 set_max_num_seqs() { set_vllm_flag "$1" "$2" max-num-seqs "$3"; }
@@ -283,20 +292,34 @@ require_free_gpu() {
 # (brief outage instead of a rollout that stays Pending forever on a 1-GPU node).
 rollout_begin() {
   local ns=$1 n=$2
-  ROLLOUT_RESTORE=""
-  if [ "${GPU_ROLLOUT:-surge}" != recreate ] || [ "$(free_gpus)" -ge 1 ]; then require_free_gpu; return; fi
+  ROLLOUT_RESTORE=""; ROLLOUT_RESTORE_PREFILL=""
+  # P/D (spec.prefill): pods are usually pinned to one node by hostname, so a cluster-wide idle GPU
+  # does not help the surge pod -> always recreate both roles.
+  ROLLOUT_RESTORE_PREFILL=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.prefill.replicas}')
+  if [ -z "$ROLLOUT_RESTORE_PREFILL" ]; then
+    if [ "${GPU_ROLLOUT:-surge}" != recreate ] || [ "$(free_gpus)" -ge 1 ]; then require_free_gpu; return; fi
+  fi
   ROLLOUT_RESTORE=$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.spec.replicas}')
-  echo "  no idle GPU -> recreate: $ns/$n replicas ${ROLLOUT_RESTORE:-1} -> 0 during the change"
-  oc patch llminferenceservice "$n" -n "$ns" --type=merge -p '{"spec":{"replicas":0}}' >/dev/null
+  echo "  recreate: $ns/$n replicas ${ROLLOUT_RESTORE:-1}${ROLLOUT_RESTORE_PREFILL:+ (prefill $ROLLOUT_RESTORE_PREFILL)} -> 0 during the change"
+  if [ -n "$ROLLOUT_RESTORE_PREFILL" ]; then
+    oc patch llminferenceservice "$n" -n "$ns" --type=merge -p '{"spec":{"replicas":0,"prefill":{"replicas":0}}}' >/dev/null
+  else
+    oc patch llminferenceservice "$n" -n "$ns" --type=merge -p '{"spec":{"replicas":0}}' >/dev/null
+  fi
   for _ in $(seq 1 60); do
-    [ "$(oc get pods -n "$ns" -l app.kubernetes.io/component=llminferenceservice-workload --no-headers 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && break
+    [ "$(oc get pods -n "$ns" -l app.kubernetes.io/component=llminferenceservice-workload --no-headers 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+      && [ "$(oc get pods -n "$ns" -l 'llm-d.ai/role in (prefill,decode)' --no-headers 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && break
     sleep 5
   done
 }
 rollout_end() {
   [ -n "${ROLLOUT_RESTORE:-}" ] || return 0
-  oc patch llminferenceservice "$2" -n "$1" --type=merge -p "{\"spec\":{\"replicas\":${ROLLOUT_RESTORE}}}" >/dev/null
-  echo "  replicas restored to $ROLLOUT_RESTORE"; ROLLOUT_RESTORE=""
+  if [ -n "${ROLLOUT_RESTORE_PREFILL:-}" ]; then
+    oc patch llminferenceservice "$2" -n "$1" --type=merge -p "{\"spec\":{\"replicas\":${ROLLOUT_RESTORE},\"prefill\":{\"replicas\":${ROLLOUT_RESTORE_PREFILL}}}}" >/dev/null
+  else
+    oc patch llminferenceservice "$2" -n "$1" --type=merge -p "{\"spec\":{\"replicas\":${ROLLOUT_RESTORE}}}" >/dev/null
+  fi
+  echo "  replicas restored to ${ROLLOUT_RESTORE}${ROLLOUT_RESTORE_PREFILL:+ (prefill $ROLLOUT_RESTORE_PREFILL)}"; ROLLOUT_RESTORE=""; ROLLOUT_RESTORE_PREFILL=""
 }
 # require_token_limit <ns> <name> [min]: MaaS 429s silently turn a benchmark into a rate-limit test
 # (hit 2026-09-29: default 100k tokens/h rejected 548/600 requests of scenario 11).

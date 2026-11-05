@@ -31,11 +31,15 @@
 #
 # [Observe] load, metrics, traces
 #   llmd-loadgen                        in-cluster load Job via tools/loadgen.py (LLMD_NAMESPACE/LLMD_NAME or URL/MODEL; see loadgen.py)
+#   guidellm                            GuideLLM benchmark Job vs LLMD_NAMESPACE/LLMD_NAME (GUIDELLM_VIA=direct|maas,
+#                                       GUIDELLM_PROFILE/STREAMS/RATES/PROMPT_TOKENS/OUTPUT_TOKENS/MAX_SECONDS, see remote/guidellm.sh)
 #   llmd-promql                         instant PromQL query via Thanos (QUERY='expr1;;expr2')
 #   llmd-monitoring                     PrometheusRule + Grafana dashboard for one LLMInferenceService (LLMD_NAMESPACE)
 #   grafana-dashboard                   publish remote/dashboards/<DASHBOARD>.json as a GrafanaDashboard (default llmd-pd-latency)
 #   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
 #                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
+#   scenario2-07-maas-ratelimit         MaaS token limit with long prompts (MAAS_RL_ARMS=E1..E4, see remote/scenario2-07-maas-ratelimit.sh)
+#   scenario2-08-mitigation             429 mitigations: limit sizing, concurrency cap, retry policy, subscription split (MAAS_MIT_ARMS=M1..M4)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
 #
 # [Scenarios] 1 GPU (SNO ok)
@@ -142,7 +146,8 @@ cmd_maas_unregister_model() {
 }
 
 cmd_maas_api_key() {
-  ssh_bastion "KEY_NAME='${KEY_NAME:-llmd-loadgen}' KEY_NAMESPACE='${KEY_NAMESPACE:-llmd-bench}' bash -s" < ./remote/maas-api-key.sh
+  ssh_bastion "KEY_NAME='${KEY_NAME:-llmd-loadgen}' KEY_NAMESPACE='${KEY_NAMESPACE:-llmd-bench}' \
+    KEY_SECRET='${KEY_SECRET:-loadgen-token}' KEY_SUBSCRIPTION='${KEY_SUBSCRIPTION:-}' bash -s" < ./remote/maas-api-key.sh
 }
 
 cmd_llmd_deploy_model() {
@@ -154,6 +159,13 @@ cmd_llmd_deploy_model() {
     bash -s" < ./remote/llmd-deploy-model.sh
 }
 
+cmd_guidellm() {
+  local envs="" v
+  for v in $(compgen -v | grep -E '^(GUIDELLM_[A-Z_]+|LLMD_NAMESPACE|LLMD_NAME|LOADGEN_NAMESPACE)$'); do
+    envs="$envs $v=$(printf '%q' "${!v}")"
+  done
+  ssh_bastion "$envs bash -s" < ./remote/guidellm.sh
+}
 cmd_llmd_loadgen() { run_bench llmd-loadgen.sh; }
 
 cmd_llmd_promql() {
@@ -262,6 +274,8 @@ cmd_scenario27() { run_bench scenario27-scorer-weights.sh; }
 cmd_scenario28() { run_bench scenario28-tokenizer.sh; }
 cmd_scenario29_shift() { LLMD_NAMESPACE="$S29_NS" run_bench scenario29-canary-shift.sh; }
 cmd_maas_checks() { run_bench maas-checks.sh; }
+cmd_scenario2_07() { run_bench scenario2-07-maas-ratelimit.sh; }
+cmd_scenario2_08() { run_bench scenario2-08-mitigation.sh; }
 
 
 # --- Scenario 11: data parallelism x routing (llmd-test, replica 1 vs 2) ---
@@ -308,11 +322,14 @@ case "$cmd" in
   scenario26-llmd-tls)                cmd_scenario26 ;;
   scenario27-llmd-scorer-weights)     cmd_scenario27 ;;
   scenario28-llmd-tokenizer)          cmd_scenario28 ;;
+  scenario2-07-maas-ratelimit)        cmd_scenario2_07 ;;
+  scenario2-08-mitigation)            cmd_scenario2_08 ;;
   maas-checks)                        cmd_maas_checks ;;
   llmd-deploy-model)                  cmd_llmd_deploy_model ;;
   llmd-monitoring)                    cmd_llmd_monitoring ;;
   grafana-dashboard)                  cmd_grafana_dashboard ;;
   llmd-loadgen)                       cmd_llmd_loadgen ;;
+  guidellm)                           cmd_guidellm ;;
   llmd-promql)                        cmd_llmd_promql ;;
   tracing)                            cmd_tracing ;;
   llmd-tracing)                       cmd_llmd_tracing ;;

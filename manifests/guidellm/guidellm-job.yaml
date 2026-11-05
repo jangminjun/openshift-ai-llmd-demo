@@ -1,0 +1,88 @@
+# GuideLLM load generator on OpenShift: results PVC, scenario ConfigMap, benchmark Job.
+# Example target: llmd-pd/qwen38-int4-tp2 (workload Service, in-cluster, TLS self-signed).
+# Apply: oc apply -n llmd-bench -f manifests/guidellm/guidellm-job.yaml
+# Rerun: oc delete job guidellm -n llmd-bench && oc apply -n llmd-bench -f manifests/guidellm/guidellm-job.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: guidellm-results
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guidellm-scenario
+data:
+  # GuideLLM 0.8.x scenario schema. Each "benchmarks" entry is one sub-benchmark
+  # (profile.streams for concurrent, profile.rate for constant/poisson).
+  scenario.json: |
+    {
+      "metadata": {"name": "qwen38-int4-concurrency"},
+      "spec": {
+        "backend": {
+          "kind": "openai_http",
+          "target": "https://qwen38-int4-tp2-kserve-workload-svc.llmd-pd.svc.cluster.local:8000",
+          "model": "Qwen3.8-27B-INT4",
+          "request_format": "/v1/chat/completions",
+          "verify": false,
+          "extras": {"body": {"chat_template_kwargs": {"enable_thinking": false}}}
+        },
+        "tokenizer": {"kind": "huggingface_auto", "model": "RedHatAI/Qwen3.8-27B-INT4"},
+        "profile": {"kind": "concurrent"},
+        "data": [{"kind": "synthetic_text", "prompt_tokens": 1000, "output_tokens": 256}],
+        "constraints": [{"kind": "max_duration", "seconds": 60}]
+      },
+      "benchmarks": [
+        {"profile.streams": 1}, {"profile.streams": 4}, {"profile.streams": 8}, {"profile.streams": 16}
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guidellm
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: guidellm
+        image: ghcr.io/vllm-project/guidellm:v0.8.1
+        # API_KEY (optional, MaaS path) is injected into the scenario at runtime so the key
+        # never lands in the ConfigMap.
+        command:
+        - sh
+        - -c
+        - |
+          python3 - <<'PY'
+          import json, os
+          s = json.load(open("/cfg/scenario.json"))
+          if os.environ.get("API_KEY"):
+              s["spec"]["backend"]["api_key"] = os.environ["API_KEY"]
+          json.dump(s, open("/tmp/scenario.json", "w"))
+          PY
+          guidellm run --scenario /tmp/scenario.json --disable-console-interactive
+        env:
+        - {name: GUIDELLM__DEFAULT_RESULTS_DIR, value: /results/latest}
+        - {name: HF_HOME, value: /tmp/hf}
+        - name: API_KEY
+          valueFrom: {secretKeyRef: {name: loadgen-token, key: token, optional: true}}
+        resources:
+          requests: {cpu: "2", memory: 4Gi}
+          limits: {cpu: "4", memory: 8Gi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: cfg, mountPath: /cfg}
+        - {name: results, mountPath: /results}
+      volumes:
+      - {name: cfg, configMap: {name: guidellm-scenario}}
+      - {name: results, persistentVolumeClaim: {claimName: guidellm-results}}

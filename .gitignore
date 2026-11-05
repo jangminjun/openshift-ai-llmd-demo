@@ -2,3 +2,4 @@ AGENT.md
 .DS_Store
 
 harness/.cache/
+harness/results/

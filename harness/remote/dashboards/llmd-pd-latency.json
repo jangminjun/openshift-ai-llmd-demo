@@ -1,7 +1,7 @@
 {
-  "title": "llm-d P/D Disaggregation — 구간별 지연 분석 (TP=1 · g6/L4)",
+  "title": "llm-d P/D Disaggregation — Latency by Stage (g6 / L4)",
   "uid": "llmd-pd-latency",
-  "description": "EPP → Prefill → NIXL KV 전송 → Decode 4개 구간 지연 분석. vLLM V1 / llm-d 1.x 메트릭 기준",
+  "description": "Latency across four stages: EPP → Prefill → NIXL KV transfer → Decode. Based on vLLM V1 / llm-d 1.x metrics.",
   "tags": [
     "llm-d",
     "vllm",
@@ -51,49 +51,49 @@
       },
       {
         "name": "prefill_pod",
-        "label": "Prefill Pod 정규식",
+        "label": "Prefill pod regex",
         "type": "textbox",
         "query": ".*-kserve-prefill-.*",
         "current": {
           "text": ".*-kserve-prefill-.*",
           "value": ".*-kserve-prefill-.*"
         },
-        "description": "Prefill Pod 이름 정규식. llm-d 배포 이름에 맞게 수정",
+        "description": "Regex for prefill pod names. Adjust to the llm-d deployment name.",
         "options": []
       },
       {
         "name": "decode_pod",
-        "label": "Decode Pod 정규식",
+        "label": "Decode pod regex",
         "type": "textbox",
         "query": ".*-kserve-[0-9a-f]{8,10}-[0-9a-z]{5}",
         "current": {
           "text": ".*-kserve-[0-9a-f]{8,10}-[0-9a-z]{5}",
           "value": ".*-kserve-[0-9a-f]{8,10}-[0-9a-z]{5}"
         },
-        "description": "Decode Pod 이름 정규식",
+        "description": "Regex for decode pod names.",
         "options": []
       },
       {
         "name": "gpu_node",
-        "label": "GPU 노드 instance 정규식",
+        "label": "GPU node instance regex",
         "type": "textbox",
         "query": ".*",
         "current": {
           "text": ".*",
           "value": ".*"
         },
-        "description": "node_exporter instance 라벨(예: ip-10-0-1-23.*). Prefill/Decode가 뜬 g6 노드로 좁히기"
+        "description": "node_exporter instance label (e.g. ip-10-0-1-23.*). Narrow to the g6 nodes running prefill/decode."
       },
       {
         "name": "net_dev",
-        "label": "네트워크 인터페이스 정규식",
+        "label": "Network interface regex",
         "type": "textbox",
         "query": "ens.*|eth.*",
         "current": {
           "text": "ens.*|eth.*",
           "value": "ens.*|eth.*"
         },
-        "description": "g6 노드의 ENA 인터페이스명 (RHCOS 기본 ens5 등)"
+        "description": "ENA interface name on g6 nodes (RHCOS default ens5, etc.)."
       }
     ]
   },
@@ -103,7 +103,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "0. 요약 (Overview) — 클라이언트 관점 E2E",
+      "title": "0. Overview — client-side end to end",
       "collapsed": false,
       "id": 1,
       "gridPos": {
@@ -116,13 +116,13 @@
     },
     {
       "type": "stat",
-      "title": "E2E 지연 p95 (EPP)",
+      "title": "E2E latency p95 (EPP)",
       "id": 2,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "llm_d_epp_request_duration_seconds — 요청 수신부터 응답 완료까지",
+      "description": "llm_d_epp_request_duration_seconds — from request receipt to response completion.",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -174,7 +174,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "사용자 체감 첫 토큰 시간. 라우팅+Prefill+KV 전송+Decode 첫 스텝 포함",
+      "description": "Time to first token as seen by the user. Includes routing + prefill + KV transfer + first decode step.",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -226,7 +226,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Decode Pod의 토큰 간 지연",
+      "description": "Inter-token latency on the decode pod.",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -272,7 +272,7 @@
     },
     {
       "type": "stat",
-      "title": "요청 처리량",
+      "title": "Request throughput",
       "id": 5,
       "datasource": {
         "type": "prometheus",
@@ -324,7 +324,7 @@
     },
     {
       "type": "stat",
-      "title": "EPP 오류율",
+      "title": "EPP error rate",
       "id": 6,
       "datasource": {
         "type": "prometheus",
@@ -384,13 +384,13 @@
     },
     {
       "type": "stat",
-      "title": "NIXL 전송 실패/s",
+      "title": "NIXL transfer failures/s",
       "id": 7,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "0이 아니면 KV 전송 실패 → kv_load_failure_policy 동작 확인",
+      "description": "Non-zero means KV transfers are failing; check kv_load_failure_policy behaviour (decode recomputes the prompt and still returns 200).",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -440,13 +440,13 @@
     },
     {
       "type": "timeseries",
-      "title": "P/D 라우팅 결정 분포",
+      "title": "P/D routing decisions",
       "id": 8,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "decode-only vs prefill-decode 비율. 업스트림 llm-d는 llm_d_epp_disagg_decision_total, RHOAI 3.x는 llm_d_inference_scheduler_disagg_decision_total — 둘 다 매칭. 짧은 프롬프트가 decode-only로 빠지면 P/D 효과 측정이 왜곡됨",
+      "description": "Share of decode-only vs prefill-decode. Matches both upstream llm-d (llm_d_epp_disagg_decision_total) and RHOAI 3.x (llm_d_inference_scheduler_disagg_decision_total). Short prompts routed decode-only skew P/D measurements.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -495,13 +495,13 @@
     },
     {
       "type": "timeseries",
-      "title": "구간별 p95 비교 (어디서 시간이 쓰이는가)",
+      "title": "p95 by stage (where the time goes)",
       "id": 9,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "sidecar Prefill − 엔진 Prefill ≈ Prefill 큐/HTTP 오버헤드. E2E TTFT − sidecar Prefill ≈ KV pull + Decode 스케줄링 + 첫 스텝.",
+      "description": "Sidecar prefill − engine prefill ≈ prefill queueing / HTTP overhead. E2E TTFT − sidecar prefill ≈ KV pull + decode scheduling + first step.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -543,7 +543,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_scheduler_e2e_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-          "legendFormat": "① EPP 스케줄링",
+          "legendFormat": "① EPP scheduling",
           "refId": "A"
         },
         {
@@ -552,7 +552,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_d_disagg_sidecar_prefill_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-          "legendFormat": "② Prefill 단계 (sidecar 관측)",
+          "legendFormat": "② Prefill stage (sidecar view)",
           "refId": "B"
         },
         {
@@ -561,7 +561,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:request_prefill_time_seconds_bucket{namespace=\"$namespace\", pod=~\"$prefill_pod\"}[$__rate_interval])))",
-          "legendFormat": "② Prefill 엔진 연산",
+          "legendFormat": "② Prefill engine compute",
           "refId": "C"
         },
         {
@@ -570,7 +570,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:nixl_xfer_time_seconds_bucket{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])))",
-          "legendFormat": "③ NIXL KV 전송 (rank 단위)",
+          "legendFormat": "③ NIXL KV transfer (per rank)",
           "refId": "D"
         },
         {
@@ -579,7 +579,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\", pod=~\"$decode_pod\"}[$__rate_interval])))",
-          "legendFormat": "④ Decode측 TTFT",
+          "legendFormat": "④ Decode-side TTFT",
           "refId": "E"
         },
         {
@@ -595,7 +595,7 @@
     },
     {
       "type": "row",
-      "title": "① 라우팅 & 오케스트레이션 (EPP / Gateway)",
+      "title": "① Routing & orchestration (EPP / Gateway)",
       "collapsed": false,
       "id": 10,
       "gridPos": {
@@ -608,13 +608,13 @@
     },
     {
       "type": "timeseries",
-      "title": "EPP 스케줄링 지연",
+      "title": "EPP scheduling latency",
       "id": 11,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "EPP 스케줄링 사이클 내부 소요. 수 ms 이상이면 scorer/filter 플러그인 점검",
+      "description": "Time inside the EPP scheduling cycle. Several ms or more: check the scorer/filter plugins.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -681,7 +681,7 @@
     },
     {
       "type": "timeseries",
-      "title": "EPP 요청 수신·처리 오버헤드",
+      "title": "EPP request / response handling overhead",
       "id": 12,
       "datasource": {
         "type": "prometheus",
@@ -729,7 +729,7 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_request_processing_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-          "legendFormat": "request 처리 p95",
+          "legendFormat": "request handling p95",
           "refId": "A"
         },
         {
@@ -738,20 +738,20 @@
             "uid": "${datasource}"
           },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_d_epp_response_processing_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-          "legendFormat": "response 처리 p95",
+          "legendFormat": "response handling p95",
           "refId": "B"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Flow Control 큐 대기 (flowControl 활성 시)",
+      "title": "Flow Control queue wait (when flowControl is enabled)",
       "id": 13,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "flowControl feature gate가 켜져 있을 때만 수집됨",
+      "description": "Collected only when the flowControl feature gate is on.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -818,13 +818,13 @@
     },
     {
       "type": "timeseries",
-      "title": "플러그인별 처리 지연 p95",
+      "title": "Plugin latency p95",
       "id": 14,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "느린 scorer/filter 식별. 라벨명은 EPP 버전에 따라 다를 수 있음",
+      "description": "Spot slow scorers/filters. Label names may differ between EPP versions.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -873,13 +873,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Pool 포화도 (stage별)",
+      "title": "Pool saturation by stage",
       "id": 15,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "prefill/decode/effective. 1.0 초과 시 수요가 용량 초과",
+      "description": "prefill / decode / effective. Above 1.0, demand exceeds capacity.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -928,7 +928,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Ready 엔드포인트 / 엔드포인트별 큐",
+      "title": "Ready endpoints / queue per endpoint",
       "id": 16,
       "datasource": {
         "type": "prometheus",
@@ -985,7 +985,7 @@
             "uid": "${datasource}"
           },
           "expr": "max(llm_d_epp_per_endpoint_queue_size{namespace=\"$namespace\"})",
-          "legendFormat": "최대 endpoint 큐",
+          "legendFormat": "max endpoint queue",
           "refId": "B"
         },
         {
@@ -994,14 +994,14 @@
             "uid": "${datasource}"
           },
           "expr": "avg(llm_d_epp_average_queue_size{namespace=\"$namespace\"})",
-          "legendFormat": "평균 큐",
+          "legendFormat": "avg queue",
           "refId": "C"
         }
       ]
     },
     {
       "type": "row",
-      "title": "② Prefill 연산 (Prefill Pod, TP=1 · L4)",
+      "title": "② Prefill compute (prefill pod, L4)",
       "collapsed": false,
       "id": 17,
       "gridPos": {
@@ -1014,13 +1014,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill 엔진 연산 시간",
+      "title": "Prefill engine compute time",
       "id": 18,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "vllm:request_prefill_time_seconds — 엔진 내부 PREFILL 단계 순수 시간",
+      "description": "vllm:request_prefill_time_seconds — pure PREFILL phase time inside the engine.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1087,13 +1087,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill 단계 지연 (sidecar 관측)",
+      "title": "Prefill stage latency (sidecar view)",
       "id": 19,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Decode Pod의 routing sidecar가 Prefill Pod 호출에 걸린 시간. 엔진 연산 시간과의 차이가 큐잉/네트워크 오버헤드. sidecar 메트릭 포트가 scrape 대상인지 확인 필요",
+      "description": "Time the decode pod routing sidecar spends calling the prefill pod. The gap to engine compute time is queueing / network overhead. Requires the sidecar metrics port to be scraped.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1160,13 +1160,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill 큐 대기 시간",
+      "title": "Prefill queue wait",
       "id": 20,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "스케줄러 WAITING 상태 체류 시간. 증가 시 Prefill 수평 확장 검토",
+      "description": "Time spent in scheduler WAITING. If it grows, consider scaling prefill out.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1233,7 +1233,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill 대기/실행 요청 수",
+      "title": "Prefill requests waiting / running",
       "id": 21,
       "datasource": {
         "type": "prometheus",
@@ -1297,13 +1297,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prompt 토큰 처리량 (Prefill TPS)",
+      "title": "Prompt token throughput (prefill TPS)",
       "id": 22,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "초당 처리 프롬프트 토큰",
+      "description": "Prompt tokens processed per second.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1352,7 +1352,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill KV 캐시 사용률 / Prefix 캐시 적중률",
+      "title": "Prefill KV cache usage / prefix cache hit rate",
       "id": 23,
       "datasource": {
         "type": "prometheus",
@@ -1417,13 +1417,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill GPU 사용률 (DCGM)",
+      "title": "Prefill GPU utilization (DCGM)",
       "id": 24,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Prefill은 compute-bound라 SM 사용률이 높아야 정상",
+      "description": "Prefill is compute-bound, so high SM utilization is expected.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1472,13 +1472,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Prefill GPU PCIe 송신량 (KV → host 스테이징)",
+      "title": "Prefill GPU PCIe TX (KV → host staging)",
       "id": 25,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "g6(L4)는 NVLink·GPUDirect RDMA가 없어 KV가 GPU→host 메모리→NIC 경로로 나감. Decode가 KV를 읽어 갈 때 Prefill측 PCIe TX가 튐. DCGM_FI_PROF_PCIE_* 는 dcgm-exporter CSV에 추가 필요(값은 bytes/s 게이지)",
+      "description": "g6 (L4) has no NVLink or GPUDirect RDMA, so KV leaves via GPU → host memory → NIC. Prefill-side PCIe TX spikes when decode pulls KV. DCGM_FI_PROF_PCIE_* must be added to the dcgm-exporter CSV (bytes/s gauge).",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1536,7 +1536,7 @@
     },
     {
       "type": "row",
-      "title": "③ KV Cache 전송 (NIXL / 노드 네트워크)",
+      "title": "③ KV cache transfer (NIXL / node network)",
       "collapsed": false,
       "id": 26,
       "gridPos": {
@@ -1549,13 +1549,13 @@
     },
     {
       "type": "timeseries",
-      "title": "NIXL 전송 시간 (post → 완료)",
+      "title": "NIXL transfer time (post → done)",
       "id": 27,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "vllm:nixl_xfer_time_seconds. TP=1이라 관측치 1건 ≈ 요청 1건. 25Gbps TCP 환경에서는 이 값이 Prefill 시간의 상당 부분을 차지할 수 있음",
+      "description": "vllm:nixl_xfer_time_seconds. One observation per request per TP rank (TP2: two per request). Over 25 Gbps TCP this can be a large share of prefill time.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1622,13 +1622,13 @@
     },
     {
       "type": "timeseries",
-      "title": "NIXL post(제출) 시간",
+      "title": "NIXL post (submit) time",
       "id": 28,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "전송 제출 동기 구간. 전송 시간은 정상인데 이 값만 높으면 descriptor 준비/제출 오버헤드",
+      "description": "Synchronous submit phase. If only this is high while transfer time is normal: descriptor preparation / submit overhead.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1695,13 +1695,13 @@
     },
     {
       "type": "timeseries",
-      "title": "유효 전송 대역폭 (bytes / xfer time)",
+      "title": "Effective transfer bandwidth (bytes / xfer time)",
       "id": 29,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "실제 전송 중 달성 대역폭(rank 평균). g6.8xlarge 네트워크 25Gbps ≈ 3.1 GB/s가 이론 상한. 1.5 GB/s 미만이면 TCP 튜닝·같은 AZ/placement group 여부 점검",
+      "description": "Bandwidth achieved while transferring (rank average). Theoretical cap: 25 Gbps ≈ 3.1 GB/s on the node network. Below 1.5 GB/s, check TCP tuning, same AZ / placement group, and whether in-node transfers bypass the GPU path.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1743,20 +1743,20 @@
             "uid": "${datasource}"
           },
           "expr": "sum(rate(vllm:nixl_bytes_transferred_sum{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])) / clamp_min(sum(rate(vllm:nixl_xfer_time_seconds_sum{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])), 1e-9)",
-          "legendFormat": "전송 중 평균 대역폭",
+          "legendFormat": "avg bandwidth while transferring",
           "refId": "A"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "전송당 평균 크기 (rank 단위)",
+      "title": "Avg size per transfer (per rank)",
       "id": 30,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "TP=1이므로 전송 1건 ≈ 요청 1건의 KV(하이브리드 모델이면 linear-attention 상태 포함)",
+      "description": "One transfer = one TP rank's share of a request's KV (plus linear-attention state for hybrid models).",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1798,20 +1798,20 @@
             "uid": "${datasource}"
           },
           "expr": "sum(rate(vllm:nixl_bytes_transferred_sum{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])) / clamp_min(sum(rate(vllm:nixl_bytes_transferred_count{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])), 1e-9)",
-          "legendFormat": "평균 bytes/전송",
+          "legendFormat": "avg bytes / transfer",
           "refId": "A"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "전송당 평균 descriptor 수",
+      "title": "Avg descriptors per transfer",
       "id": 31,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "높으면 KV 블록 단편화 또는 작은 block_size",
+      "description": "High values point to KV block fragmentation or a small block_size.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1853,20 +1853,20 @@
             "uid": "${datasource}"
           },
           "expr": "sum(rate(vllm:nixl_num_descriptors_sum{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])) / clamp_min(sum(rate(vllm:nixl_num_descriptors_count{namespace=\"$namespace\", pod=~\"$prefill_pod|$decode_pod\"}[$__rate_interval])), 1e-9)",
-          "legendFormat": "평균 descriptors",
+          "legendFormat": "avg descriptors",
           "refId": "A"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "NIXL 실패 / 만료",
+      "title": "NIXL failures / expirations",
       "id": 32,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "KV expired 증가 = Decode가 읽기 전에 lease 만료 → kv_lease_duration 또는 Decode 적체 점검",
+      "description": "Rising KV expired = lease ran out before decode read it: check kv_lease_duration, decode backlog, or failed handshakes (NIXL side channel host).",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1926,20 +1926,20 @@
             "uid": "${datasource}"
           },
           "expr": "sum(rate(vllm:nixl_num_kv_expired_reqs{namespace=\"$namespace\", pod=~\"$prefill_pod\"}[$__rate_interval]))",
-          "legendFormat": "KV expired (Prefill측)",
+          "legendFormat": "KV expired (prefill side)",
           "refId": "C"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "GPU 노드 네트워크 송수신량 (ENA)",
+      "title": "GPU node network TX / RX (ENA)",
       "id": 33,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "NIXL(UCX TCP) KV 전송이 실리는 경로. 25Gbps ≈ 3.1 GB/s에 근접하면 네트워크 포화. Prefill 노드 TX와 Decode 노드 RX가 NIXL 전송 시점과 맞물리는지 확인",
+      "description": "Path carrying NIXL (UCX TCP) KV transfers. Near 25 Gbps ≈ 3.1 GB/s means the network is saturated. Check that prefill-node TX and decode-node RX line up with NIXL transfers.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1997,13 +1997,13 @@
     },
     {
       "type": "timeseries",
-      "title": "네트워크 혼잡 신호 (TCP 재전송, 드롭)",
+      "title": "Network congestion signals (TCP retransmits, drops)",
       "id": 34,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "재전송 증가 시 NIXL 전송 꼬리 지연(p99) 급증. ENA 허용치 초과(bw_out_allowance_exceeded 등)는 ethtool 기반 exporter로 별도 수집",
+      "description": "Rising retransmits blow up NIXL tail latency (p99). ENA allowance overruns (bw_out_allowance_exceeded, etc.) need a separate ethtool-based exporter.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -2061,7 +2061,7 @@
     },
     {
       "type": "row",
-      "title": "④ Decode 스케줄링 & 연산 (Decode Pod, TP=1 · L4)",
+      "title": "④ Decode scheduling & compute (decode pod, L4)",
       "collapsed": false,
       "id": 35,
       "gridPos": {
@@ -2080,7 +2080,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Decode 메모리 대역폭 병목 지표",
+      "description": "Indicator of decode memory-bandwidth bottlenecks.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2147,13 +2147,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode측 TTFT",
+      "title": "Decode-side TTFT",
       "id": 37,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Decode 엔진 관점 첫 토큰. KV pull 대기 + 스케줄링 + 첫 스텝 포함",
+      "description": "First token from the decode engine's view. Includes KV pull wait + scheduling + first step.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2220,13 +2220,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode 단계 지연 (sidecar 관측)",
+      "title": "Decode stage latency (sidecar view)",
       "id": 38,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "출력 길이에 비례. 출력 토큰 수로 정규화해서 해석",
+      "description": "Scales with output length; normalize by output tokens when reading it.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2293,13 +2293,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode 대기/실행 요청 수",
+      "title": "Decode requests waiting / running",
       "id": 39,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "waiting>0이 지속되면 KV 수신 블록 부족 또는 동시성 한계",
+      "description": "Sustained waiting > 0 means not enough KV blocks to receive into, or the concurrency limit.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2357,13 +2357,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode KV 캐시 사용률",
+      "title": "Decode KV cache usage",
       "id": 40,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "0.9 이상이면 신규 KV 수신이 막히고 preemption 발생",
+      "description": "Above 0.9, new KV can't be received and preemption starts.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2413,7 +2413,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Preemption 발생률",
+      "title": "Preemption rate",
       "id": 41,
       "datasource": {
         "type": "prometheus",
@@ -2468,7 +2468,7 @@
     },
     {
       "type": "timeseries",
-      "title": "생성 토큰 처리량 (Decode TPS)",
+      "title": "Generated token throughput (decode TPS)",
       "id": 42,
       "datasource": {
         "type": "prometheus",
@@ -2523,13 +2523,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode GPU 사용률 / 메모리 대역폭 (DCGM)",
+      "title": "Decode GPU utilization / memory bandwidth (DCGM)",
       "id": 43,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Decode는 DRAM active가 높고 SM 사용률은 상대적으로 낮은 게 정상",
+      "description": "Decode normally shows high DRAM active and relatively low SM utilization.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2587,13 +2587,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Decode GPU PCIe 수신량 (host → KV 적재)",
+      "title": "Decode GPU PCIe RX (host → KV load)",
       "id": 44,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "수신한 KV를 host 버퍼에서 GPU로 올리는 구간",
+      "description": "Moving received KV from host buffers onto the GPU.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -2642,7 +2642,7 @@
     },
     {
       "type": "row",
-      "title": "⑤ 오류 & 장애",
+      "title": "⑤ Errors & failures",
       "collapsed": false,
       "id": 45,
       "gridPos": {
@@ -2655,7 +2655,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Disagg sidecar 단계별 오류",
+      "title": "Disagg sidecar errors by stage",
       "id": 46,
       "datasource": {
         "type": "prometheus",
@@ -2710,7 +2710,7 @@
     },
     {
       "type": "timeseries",
-      "title": "EPP 오류 코드별",
+      "title": "EPP errors by code",
       "id": 47,
       "datasource": {
         "type": "prometheus",
@@ -2765,7 +2765,7 @@
     },
     {
       "type": "timeseries",
-      "title": "엔드포인트별 NIXL 실패 (EPP 집계)",
+      "title": "NIXL failures per endpoint (EPP)",
       "id": 48,
       "datasource": {
         "type": "prometheus",

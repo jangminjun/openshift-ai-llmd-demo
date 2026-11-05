@@ -101,7 +101,22 @@ NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness
 
 | # | 기능 | 검증 내용 | 결과 | 매니페스트 |
 |---|---|---|---|---|
-| 2-01 | [P/D 분리 × 텐서 병렬화](docs/scenarios-2/01-pd-disaggregation.md) | 27B 모델을 TP2/TP4로 나누어 P/D 구성, 정밀도 vs 4비트 양자화 비교 | INT4 TP2 단일 인스턴스 동작 확인(KV 373,321 토큰). P/D 미실행 | `manifests/pd/` |
+| 2-00 | [P/D 분리 × 텐서 병렬화 준비 작업](docs/scenarios-2/00-pd-disaggregation-setup.md) | 27B 모델을 TP2/TP4로 나누어 P/D 구성, 정밀도 vs 4비트 양자화 비교 | INT4 TP2 단일 인스턴스 동작 확인(KV 373,321 토큰). P/D 미실행 | `manifests/pd/` |
+| 2-01 | [GuideLLM 부하 생성기](docs/scenarios-2/01-guidellm-loadgen.md) | GuideLLM 0.8.1을 OpenShift Job으로 실행, direct·MaaS 경로, 내장 시나리오 | INT4 TP2에서 동시 1→4: 출력 26.0→74.9 tok/s, ITL 35→40ms | `./harness.sh guidellm`, `manifests/guidellm/` |
+| 2-02 | [P/D 요청 경로](docs/scenarios-2/02-pd-request-path.md) | 요청 1건이 prefill → KV(NIXL) → decode로 처리되는지 | EPP·prefill·decode가 한 trace로 연결. NIXL 기본 주소(localhost) 때문에 KV 전달 전부 실패 → pod IP 지정 후 성공(전송당 약 103MB, 290MB/s) | `manifests/pd/qwen38-int4-pd.yaml` |
+| 2-03 | [부하 하 P/D 동작](docs/scenarios-2/03-pd-under-load.md) | GuideLLM 동시 1~16에서 분리율, KV 전달 실패, decode ITL | 설계 | `./harness.sh guidellm` |
+| 2-04 | [P/D 결정 임계값](docs/scenarios-2/04-pd-decider-threshold.md) | 짧은 프롬프트의 prefill 생략(decider) | 설계 | EPP 설정 |
+| 2-05 | [prefix 캐시와 P/D](docs/scenarios-2/05-pd-prefix-cache.md) | 다중 턴 2턴의 prefill 생략과 decode 캐시 재사용 | 설계 | |
+| 2-06 | [gpu-memory-utilization과 OOM](docs/scenarios-2/06-gpu-memory-utilization.md) | util 0.95/0.85/0.80/0.75별 기동·KV 용량·부하 시 preemption을 Grafana 구간별로 관측 | 설계 | `manifests/pd/qwen38-int4-pd.yaml` |
+| 2-07 | [장문 호출과 MaaS 토큰 한도](docs/scenarios-2/07-maas-token-ratelimit.md) | 토큰/15초 한도에서 장문 요청 후 429 발생 구조(응답 후 차감, 동시 초과, 스트리밍 usage, 2단 한도) | 응답 후 차감 + 첫 차감부터의 고정 구간. 동시 장문이 한도 2.4배 사용, 단문 7.2초 연쇄 차단. 1분 구간 차단 25초. Retry-After 없음 | `./harness.sh scenario2-07-maas-ratelimit` |
+| 2-08 | [429 원인 검증과 완화 방안](docs/scenarios-2/08-429-root-cause-and-mitigation.md) | 원인 가설 H1~H3 판정, 방안 M1~M6·S1~S2를 하위 시나리오로 매핑 | 실행 중 | `./harness.sh scenario2-08-mitigation` (`MAAS_MIT_ARMS=single io saturate`) |
+| 2-08-1 | [토큰 한도 재설계](docs/scenarios-2/08-1-limit-sizing.md) | 구간 한도 크기와 2단 한도 | 20K/15s: 429 26건 → 25K/15s(장문 × 동시 2): 0건, 작업 지연 p50 8.5 → 2.1초 | `MAAS_MIT_ARMS=limit` |
+| 2-08-2 | [prefix 캐시와 토큰 차감](docs/scenarios-2/08-2-prefix-cache.md) | prefill prefix 캐시 꺼짐/켜짐의 차감량·TTFT | 실행 대기 | `MAAS_MIT_ARMS=prefix` |
+| 2-08-3 | [prefill max_num_batched_tokens](docs/scenarios-2/08-3-batched-tokens.md) | 장문 prefill 중 단문 TTFT | 실행 대기 | `MAAS_MIT_ARMS=chunk` |
+| 2-08-4 | [429 재시도 정책](docs/scenarios-2/08-4-retry-backoff.md) | 즉시·고정 15초·지수 백오프 | 백오프: 429 6건(즉시 36건), 완료 시간 +3%(고정 15초 +29%) | `MAAS_MIT_ARMS=retry` |
+| 2-08-5 | [세션당 동시 실행 제한](docs/scenarios-2/08-5-concurrency-cap.md) | 동시 4/2/1의 초과량과 단문 429 | 실행 중 | `MAAS_MIT_ARMS=conc` |
+| 2-08-6 | [구독 분리](docs/scenarios-2/08-6-subscription-split.md) | 장문·대화형을 다른 구독으로 | 실행 중 | `MAAS_MIT_ARMS=split` |
+| 2-08-7 | [입력 압축 효과 산정](docs/scenarios-2/08-7-input-compression.md) | RAG 요약·reranker의 차감 효과 계산 | 산정 대기 | - |
 
 ## 사전 조건
 
@@ -255,11 +270,12 @@ harness/
   remote/dashboards/          llmd-observability.json (지연 분해), llmd-pd-latency.json (P/D 구간별 지연)
   remote/grafana-dashboard.sh dashboards/*.json 을 GrafanaDashboard 로 반영 (grafana-dashboard 명령)
   remote/sno/sno-check.sh     scenarios-2 클러스터 점검 (sno-check 명령)
+  remote/guidellm.sh          GuideLLM 벤치마크 Job (guidellm 명령, 결과는 harness/results/guidellm/)
   profiles/                   클러스터 프로파일: aws(기본), sno(scenarios-2)
 docs/
   scenarios/                  11~14(llmd-test), 15~16(설계, 보류), 21~29(llm-d GA, llmd-ga-overview.md)
   scenarios/images/           시나리오별 화면 캡처
-  scenarios-2/                sandbox1343 시나리오 (2-01 P/D 분리 × TP)
+  scenarios-2/                sandbox1343 시나리오 (2-00 P/D 분리 × TP)
   test-cases.md               관측성 테스트케이스 TC-01~05
   test-results-2026-09-07.md  RHOAI 3.4.4 실측 결과
 manifests/

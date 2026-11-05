@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="700" viewBox="0 0 1400 700" font-family="Apple SD Gothic Neo, AppleGothic, Noto Sans KR, Helvetica, sans-serif">
+<rect width="1400" height="700" fill="#fcfcfb"/>
+<text x="100" y="40" font-size="22" font-weight="700" fill="#0b0b0b">E1 — 응답 후 차감과 고정 구간: 한도 20,000토큰 / 15초, 장문 요청(약 12,100토큰) 연속</text>
+<text x="100" y="68" font-size="15" fill="#52514e">구간은 슬라이딩이 아니라 고정 구간이다. 그 사용자의 첫 차감 시점에 시작해 15초 뒤 카운터가 0으로 한꺼번에 초기화된다.</text>
+<text x="100" y="90" font-size="15" fill="#52514e">요청 시작 시에는 "누적 &lt; 한도"만 확인하고(통과), 토큰은 응답이 끝날 때 차감된다.</text>
+<rect x="296.2" y="120" width="270.0" height="402" fill="#2a78d6" fill-opacity="0.08"/>
+<line x1="296.2" y1="120" x2="296.2" y2="522" stroke="#2a78d6" stroke-opacity="0.5" stroke-width="1"/>
+<line x1="566.2" y1="120" x2="566.2" y2="522" stroke="#2a78d6" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="302.2" y="478" font-size="14" fill="#52514e">구간 1: 10.9–25.9초</text>
+<rect x="760.6" y="120" width="270.0" height="402" fill="#2a78d6" fill-opacity="0.08"/>
+<line x1="760.6" y1="120" x2="760.6" y2="522" stroke="#2a78d6" stroke-opacity="0.5" stroke-width="1"/>
+<line x1="1030.6" y1="120" x2="1030.6" y2="522" stroke="#2a78d6" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="766.6" y="478" font-size="14" fill="#52514e">구간 2: 36.7–51.7초</text>
+<rect x="1228.6" y="120" width="131.4" height="402" fill="#2a78d6" fill-opacity="0.08"/>
+<line x1="1228.6" y1="120" x2="1228.6" y2="522" stroke="#2a78d6" stroke-opacity="0.5" stroke-width="1"/>
+<text x="1234.6" y="478" font-size="14" fill="#52514e">구간 3: 62.7초–</text>
+<line x1="100" y1="400.0" x2="1360" y2="400.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="90" y="405.0" font-size="13" fill="#898781" text-anchor="end">0</text>
+<line x1="100" y1="306.7" x2="1360" y2="306.7" stroke="#e1e0d9" stroke-width="1"/>
+<text x="90" y="311.7" font-size="13" fill="#898781" text-anchor="end">10,000</text>
+<line x1="100" y1="213.3" x2="1360" y2="213.3" stroke="#e1e0d9" stroke-width="1"/>
+<text x="90" y="218.3" font-size="13" fill="#898781" text-anchor="end">20,000</text>
+<line x1="100" y1="120.0" x2="1360" y2="120.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="90" y="125.0" font-size="13" fill="#898781" text-anchor="end">30,000</text>
+<text x="24" y="260" font-size="14" fill="#52514e" transform="rotate(-90 24 260)" text-anchor="middle">구간 내 누적 차감 토큰</text>
+<line x1="100" y1="213.3" x2="1360" y2="213.3" stroke="#52514e" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1356" y="205.3" font-size="14" fill="#0b0b0b" text-anchor="end">한도 20,000</text>
+<polyline points="100.0,400.0 296.2,400.0 296.2,286.9 492.4,286.9 492.4,173.3 566.2,173.3 566.2,400.0 760.6,400.0 760.6,287.2 958.6,287.2 958.6,174.1 1030.6,174.1 1030.6,400.0 1228.6,400.0 1228.6,286.8 1360.0,286.8 1360.0,286.8" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="296.2" cy="286.9" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="492.4" cy="173.3" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="760.6" cy="287.2" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="958.6" cy="174.1" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="1228.6" cy="286.8" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<text x="90" y="505" font-size="14" fill="#52514e" text-anchor="end">요청</text>
+<rect x="101.0" y="490" width="194.2" height="20" rx="4" fill="#1baf7a"/>
+<text x="198.1" y="505" font-size="12" fill="#ffffff" text-anchor="middle">200 · 12,115</text>
+<rect x="297.2" y="490" width="194.2" height="20" rx="4" fill="#1baf7a"/>
+<text x="394.3" y="505" font-size="12" fill="#ffffff" text-anchor="middle">200 · 12,176</text>
+<rect x="567.2" y="490" width="192.4" height="20" rx="4" fill="#1baf7a"/>
+<text x="663.4" y="505" font-size="12" fill="#ffffff" text-anchor="middle">200 · 12,087</text>
+<rect x="761.6" y="490" width="196.0" height="20" rx="4" fill="#1baf7a"/>
+<text x="859.6" y="505" font-size="12" fill="#ffffff" text-anchor="middle">200 · 12,112</text>
+<rect x="1033.4" y="490" width="194.2" height="20" rx="4" fill="#1baf7a"/>
+<text x="1130.5" y="505" font-size="12" fill="#ffffff" text-anchor="middle">200 · 12,133</text>
+<path d="M487.4,495 L497.4,505 M497.4,495 L487.4,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M505.4,495 L515.4,505 M515.4,495 L505.4,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M523.4,495 L533.4,505 M533.4,495 L523.4,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M543.2,495 L553.2,505 M553.2,495 L543.2,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M953.6,495 L963.6,505 M963.6,495 L953.6,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M971.6,495 L981.6,505 M981.6,495 L971.6,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M989.6,495 L999.6,505 M999.6,495 L989.6,505" stroke="#d03b3b" stroke-width="2.5"/>
+<path d="M1009.4,495 L1019.4,505 M1019.4,495 L1009.4,505" stroke="#d03b3b" stroke-width="2.5"/>
+<line x1="100" y1="560" x2="1360" y2="560" stroke="#c3c2b7" stroke-width="1"/>
+<line x1="100.0" y1="560" x2="100.0" y2="565" stroke="#c3c2b7"/>
+<text x="100.0" y="582" font-size="13" fill="#898781" text-anchor="middle">0</text>
+<line x1="190.0" y1="560" x2="190.0" y2="565" stroke="#c3c2b7"/>
+<text x="190.0" y="582" font-size="13" fill="#898781" text-anchor="middle">5</text>
+<line x1="280.0" y1="560" x2="280.0" y2="565" stroke="#c3c2b7"/>
+<text x="280.0" y="582" font-size="13" fill="#898781" text-anchor="middle">10</text>
+<line x1="370.0" y1="560" x2="370.0" y2="565" stroke="#c3c2b7"/>
+<text x="370.0" y="582" font-size="13" fill="#898781" text-anchor="middle">15</text>
+<line x1="460.0" y1="560" x2="460.0" y2="565" stroke="#c3c2b7"/>
+<text x="460.0" y="582" font-size="13" fill="#898781" text-anchor="middle">20</text>
+<line x1="550.0" y1="560" x2="550.0" y2="565" stroke="#c3c2b7"/>
+<text x="550.0" y="582" font-size="13" fill="#898781" text-anchor="middle">25</text>
+<line x1="640.0" y1="560" x2="640.0" y2="565" stroke="#c3c2b7"/>
+<text x="640.0" y="582" font-size="13" fill="#898781" text-anchor="middle">30</text>
+<line x1="730.0" y1="560" x2="730.0" y2="565" stroke="#c3c2b7"/>
+<text x="730.0" y="582" font-size="13" fill="#898781" text-anchor="middle">35</text>
+<line x1="820.0" y1="560" x2="820.0" y2="565" stroke="#c3c2b7"/>
+<text x="820.0" y="582" font-size="13" fill="#898781" text-anchor="middle">40</text>
+<line x1="910.0" y1="560" x2="910.0" y2="565" stroke="#c3c2b7"/>
+<text x="910.0" y="582" font-size="13" fill="#898781" text-anchor="middle">45</text>
+<line x1="1000.0" y1="560" x2="1000.0" y2="565" stroke="#c3c2b7"/>
+<text x="1000.0" y="582" font-size="13" fill="#898781" text-anchor="middle">50</text>
+<line x1="1090.0" y1="560" x2="1090.0" y2="565" stroke="#c3c2b7"/>
+<text x="1090.0" y="582" font-size="13" fill="#898781" text-anchor="middle">55</text>
+<line x1="1180.0" y1="560" x2="1180.0" y2="565" stroke="#c3c2b7"/>
+<text x="1180.0" y="582" font-size="13" fill="#898781" text-anchor="middle">60</text>
+<line x1="1270.0" y1="560" x2="1270.0" y2="565" stroke="#c3c2b7"/>
+<text x="1270.0" y="582" font-size="13" fill="#898781" text-anchor="middle">65</text>
+<line x1="1360.0" y1="560" x2="1360.0" y2="565" stroke="#c3c2b7"/>
+<text x="1360.0" y="582" font-size="13" fill="#898781" text-anchor="middle">70</text>
+<text x="730" y="606" font-size="14" fill="#52514e" text-anchor="middle">시간 (초)</text>
+<line x1="296.2" y1="286.9" x2="319.6" y2="246.0" stroke="#898781" stroke-width="1"/>
+<text x="323.6" y="250.0" font-size="13" fill="#0b0b0b">② 요청2 시작: 누적 12,115 &lt; 한도</text>
+<text x="323.6" y="267.0" font-size="13" fill="#0b0b0b">→ 통과 (토큰은 끝날 때 차감)</text>
+<line x1="492.4" y1="173.3" x2="514.0" y2="136.8" stroke="#898781" stroke-width="1"/>
+<text x="518.0" y="140.8" font-size="13" fill="#0b0b0b">요청2 차감 → 누적 24,291 (한도 초과)</text>
+<text x="518.0" y="157.8" font-size="13" fill="#0b0b0b">→ 21.8~24.9초 요청은 429 (✗)</text>
+<line x1="566.2" y1="400.0" x2="586.0" y2="348.7" stroke="#898781" stroke-width="1"/>
+<text x="590.0" y="352.7" font-size="13" fill="#0b0b0b">구간 1 종료(10.9 + 15초)</text>
+<text x="590.0" y="369.7" font-size="13" fill="#0b0b0b">→ 카운터 0 → 다음 요청 통과</text>
+<line x1="100" y1="638" x2="126" y2="638" stroke="#2a78d6" stroke-width="2.5"/><circle cx="113" cy="638" r="5" fill="#2a78d6"/>
+<text x="134" y="643" font-size="13" fill="#0b0b0b">누적 차감 토큰 (점 = 응답 완료 시 차감)</text>
+<rect x="430" y="631" width="26" height="14" rx="3" fill="#2a78d6" fill-opacity="0.15" stroke="#2a78d6" stroke-opacity="0.5"/>
+<text x="464" y="643" font-size="13" fill="#0b0b0b">15초 구간 (첫 차감에서 시작)</text>
+<rect x="710" y="631" width="26" height="14" rx="4" fill="#1baf7a"/>
+<text x="744" y="643" font-size="13" fill="#0b0b0b">요청 처리 중 → 200 (차감 토큰)</text>
+<path d="M998,633 L1008,643 M1008,633 L998,643" stroke="#d03b3b" stroke-width="2.5"/>
+<text x="1024" y="643" font-size="13" fill="#0b0b0b">429 거부 (1초 간격 재시도)</text>
+</svg>
