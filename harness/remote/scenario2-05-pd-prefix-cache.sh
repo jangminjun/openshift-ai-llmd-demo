@@ -41,6 +41,8 @@ set_vllm_flag "$NS" "$N" enable-prefix-caching on both
 for th in ${S25_THRESHOLDS:-0 1000}; do
   say "threshold $th: ${S25_SESSIONS:-40} conversations x 2 turns, document ~${S25_DOC_WORDS:-3000} tokens"
   epp_set "$NS" "$N" "$(epp_with_threshold "$th")"
+  oc logs "deploy/${N}-kserve-router-scheduler" -n "$NS" 2>/dev/null | grep 'Effective raw configuration' | tail -1 \
+    | grep -oE 'Name: [a-z-]*decider[^}]*}' | sed 's/^/  EPP: /'
   c0=$(pd_counters "$NS" "$N")
   loadgen_start "s25-$th" LLMD_NAMESPACE="$NS" LLMD_NAME="$N" PROMPT_MODE=multi-turn TURNS=2 \
     SESSIONS="${S25_SESSIONS:-40}" CONCURRENCY="${S25_CONCURRENCY:-4}" PREFIX_TOKENS="${S25_DOC_WORDS:-3000}" \

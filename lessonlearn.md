@@ -32,6 +32,10 @@
   적용되므로 시험 후 원복한다(2-08-0).
   원인은 Limitador v2.4.2의 `CheckRateLimit`(토큰 한도가 쓰는 Kuadrant RLS API)이 헤더를 항상 빈 목록으로 반환하는 데 있다.
   업스트림 v2.6.0에서 지원이 추가되었다.
+- **하이브리드 모델은 KV 블록이 1,568토큰이라 P/D decider 기준을 블록 크기 이상으로 둬야 한다(2-05).** prefix 캐시는 꽉 찬
+  블록만 재사용하므로 채팅 2번째 질문의 캐시 안 된 꼬리가 최대 1,567토큰 남는다. EPP 근사 prefix 색인은 `autoTune`으로 이
+  블록 크기를 쓰므로 `nonCachedTokens: 250`에서는 2번째 질문이 항상 분리되었고, 2,000에서는 모두 prefill을 건너뛰었다.
+  이전 형식 `pd-profile-handler`의 `threshold`는 4로 나뉘어 `nonCachedTokens`가 된다(1000 → 250, 8000 → 2000).
 - **로컬 bash 3.2(macOS)와 BSD awk.** 하네스는 로컬 실행 시 `/bin/bash` 3.2를 쓰므로 연관 배열(`declare -A`)과 `$(case ...)`가
   동작하지 않고, BSD awk는 괄호 없는 삼항 연산(`NR>1?",":""`)을 거부한다.
 

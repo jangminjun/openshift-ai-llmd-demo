@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" font-family="Apple SD Gothic Neo, AppleGothic, Noto Sans KR, Helvetica, sans-serif">
+<rect width="960" height="500" fill="#fcfcfb"/>
+<text x="90" y="34" font-size="20" font-weight="700" fill="#0b0b0b">시나리오 2-05: 채팅 1번째·2번째 질문의 TTFT (prefix 캐시 켬)</text>
+<text x="90" y="58" font-size="14" fill="#52514e">막대 = TTFT p50 (대화 40개, 문서 약 3,000토큰). 2번째 질문 막대 아래 = prefill pod 경유 건수</text>
+<line x1="90" y1="370.0" x2="930" y2="370.0" stroke="#e1e0d9"/>
+<text x="80" y="375.0" font-size="13" fill="#898781" text-anchor="end">0</text>
+<line x1="90" y1="301.5" x2="930" y2="301.5" stroke="#e1e0d9"/>
+<text x="80" y="306.5" font-size="13" fill="#898781" text-anchor="end">2</text>
+<line x1="90" y1="233.0" x2="930" y2="233.0" stroke="#e1e0d9"/>
+<text x="80" y="238.0" font-size="13" fill="#898781" text-anchor="end">4</text>
+<line x1="90" y1="164.5" x2="930" y2="164.5" stroke="#e1e0d9"/>
+<text x="80" y="169.5" font-size="13" fill="#898781" text-anchor="end">6</text>
+<line x1="90" y1="96.0" x2="930" y2="96.0" stroke="#e1e0d9"/>
+<text x="80" y="101.0" font-size="13" fill="#898781" text-anchor="end">8</text>
+<text x="26" y="233" font-size="14" fill="#52514e" text-anchor="middle" transform="rotate(-90 26 233)">TTFT p50 (초)</text>
+<line x1="90" y1="370.0" x2="930" y2="370.0" stroke="#c3c2b7"/>
+<path d="M145.0,370.0 L145.0,139.5245 Q145.0,135.5245 149.0,135.5245 L225.0,135.5245 Q229.0,135.5245 229.0,139.5245 L229.0,370.0 Z" fill="#a3a29a"/>
+<text x="187.0" y="126.5" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">6.85초</text>
+<path d="M231.0,370.0 L231.0,235.8355 Q231.0,231.8355 235.0,231.8355 L311.0,231.8355 Q315.0,231.8355 315.0,235.8355 L315.0,370.0 Z" fill="#2a78d6"/>
+<text x="273.0" y="222.8" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">4.03초</text>
+<text x="273.0" y="392.0" font-size="13" font-weight="700" fill="#d03b3b" text-anchor="middle">prefill 40/40</text>
+<text x="230.0" y="422.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">T0 항상 분리</text>
+<text x="230.0" y="442.0" font-size="13" fill="#52514e" text-anchor="middle">threshold 0</text>
+<path d="M425.0,370.0 L425.0,137.538 Q425.0,133.538 429.0,133.538 L505.0,133.538 Q509.0,133.538 509.0,137.538 L509.0,370.0 Z" fill="#a3a29a"/>
+<text x="467.0" y="124.5" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">6.90초</text>
+<path d="M511.0,370.0 L511.0,233.64350000000002 Q511.0,229.64350000000002 515.0,229.64350000000002 L591.0,229.64350000000002 Q595.0,229.64350000000002 595.0,233.64350000000002 L595.0,370.0 Z" fill="#2a78d6"/>
+<text x="553.0" y="220.6" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">4.10초</text>
+<text x="553.0" y="392.0" font-size="13" font-weight="700" fill="#d03b3b" text-anchor="middle">prefill 40/40</text>
+<text x="510.0" y="422.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">T1 기준 250</text>
+<text x="510.0" y="442.0" font-size="13" fill="#52514e" text-anchor="middle">nonCachedTokens 250</text>
+<path d="M705.0,370.0 L705.0,158.60175 Q705.0,154.60175 709.0,154.60175 L785.0,154.60175 Q789.0,154.60175 789.0,158.60175 L789.0,370.0 Z" fill="#a3a29a"/>
+<text x="747.0" y="145.6" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">6.29초</text>
+<path d="M791.0,370.0 L791.0,248.88475 Q791.0,244.88475 795.0,244.88475 L871.0,244.88475 Q875.0,244.88475 875.0,248.88475 L875.0,370.0 Z" fill="#2a78d6"/>
+<text x="833.0" y="235.9" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">3.65초</text>
+<text x="833.0" y="392.0" font-size="13" font-weight="700" fill="#2a78d6" text-anchor="middle">prefill 0/40</text>
+<text x="790.0" y="422.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">T2 기준 2,000</text>
+<text x="790.0" y="442.0" font-size="13" fill="#52514e" text-anchor="middle">nonCachedTokens 2000</text>
+<text x="840.0" y="191.9" font-size="14" font-weight="700" fill="#2a78d6" text-anchor="middle">T0 대비 −9%</text>
+<text x="840.0" y="209.9" font-size="13" fill="#52514e" text-anchor="middle">prefill·KV 전송 생략</text>
+<rect x="90" y="467" width="16" height="14" rx="3" fill="#a3a29a"/>
+<text x="114" y="479" font-size="14" fill="#0b0b0b">1번째 질문 (문서 처음 계산)</text>
+<rect x="390" y="467" width="16" height="14" rx="3" fill="#2a78d6"/>
+<text x="414" y="479" font-size="14" fill="#0b0b0b">2번째 질문 (앞의 대화를 캐시에서 재사용)</text>
+</svg>

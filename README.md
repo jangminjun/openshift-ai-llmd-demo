@@ -106,7 +106,7 @@ NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness
 | 2-02 | [P/D 요청 경로](docs/scenarios-2/02-pd-request-path.md) | 요청 1건이 prefill → KV(NIXL) → decode로 처리되는지 | EPP·prefill·decode가 한 trace로 연결. NIXL 기본 주소(localhost) 때문에 KV 전달 전부 실패 → pod IP 지정 후 성공(전송당 약 103MB, 290MB/s) | `manifests/pd/qwen38-int4-pd.yaml` |
 | 2-03 | [부하 하 P/D 동작](docs/scenarios-2/03-pd-under-load.md) | GuideLLM 동시 1~16에서 분리율, KV 전달 실패, decode ITL | 분리 정상(KV 실패 0). 8K 프롬프트에서 TTFT 7 → 27초에도 ITL 35.9ms 유지. 병목은 prefill | `./harness.sh scenario2-03-pd-load` |
 | 2-04 | [P/D 결정 임계값](docs/scenarios-2/04-pd-decider-threshold.md) | 짧은 프롬프트의 prefill 생략(decider) | `threshold: 1000`: 짧은 요청 prefill 경유 0건, TTFT 0.52 → 0.10초. 긴 요청은 그대로 분리 | `./harness.sh scenario2-04-pd-decider` |
-| 2-05 | [prefix 캐시와 P/D](docs/scenarios-2/05-pd-prefix-cache.md) | 채팅 2번째 질문의 prefill 생략과 decode 캐시 재사용(항상 분리 vs 임계값 분리) | 실행 중 | `./harness.sh scenario2-05-pd-prefix-cache` |
+| 2-05 | [prefix 캐시와 P/D](docs/scenarios-2/05-pd-prefix-cache.md) | 채팅 2번째 질문의 prefill 생략과 decode 캐시 재사용(항상 분리 vs 임계값 분리) | prefix 캐시로 2번째 질문 TTFT −40%. 블록 1,568토큰 때문에 기준 250에선 생략 안 됨, 2,000에서 prefill 0/40·TTFT 추가 −9% | `./harness.sh scenario2-05-pd-prefix-cache` |
 | 2-06 | [P/D 역할별 GPU 메모리 설정](docs/scenarios-2/06-gpu-memory-utilization.md) | prefill·decode의 메모리 성격 차이를 이용한 OOM 회피(개요) | 설계 | - |
 | 2-06-1 | [역할별 gpu-memory-utilization](docs/scenarios-2/06-1-role-memory-utilization.md) | prefill 0.75, decode 0.90(한계 0.95) | 설계 | - |
 | 2-06-2 | [prefill --enforce-eager](docs/scenarios-2/06-2-prefill-enforce-eager.md) | prefill CUDA graph 메모리·컴파일 시간 회수 | 설계 | - |
