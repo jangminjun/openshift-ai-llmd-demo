@@ -23,6 +23,15 @@
   한도를 확인한다.
 - **Qwen3.8(하이브리드) 모델은 vLLM 0.24에서 prefix 캐시가 기본으로 꺼진다**(`enable_prefix_caching=False`). prefix 캐시를
   전제로 한 시나리오(2-05, 2-08-2)는 `--enable-prefix-caching`을 명시해야 한다.
+- **MaaS Gateway 경유 요청은 첫 토큰까지 60초를 넘기면 끊긴다(2026-11-12).** MaaS Gateway Service는 AWS Classic ELB
+  (`LoadBalancer`)로 노출되며 유휴 타임아웃 기본값이 60초이다. 장문 48건을 동시에 보내자 prefill 대기로 첫 토큰이 늦어진 35건이
+  59.8초에 `0 DC downstream_remote_disconnect`로 끊겼다. HTTPRoute 타임아웃(`0s`)과 무관하며, 클라이언트에는 429가 아닌
+  연결 오류로 보인다.
+- **Limitador `rateLimitHeaders: DRAFT_VERSION_03`을 켜도 MaaS 응답에 `X-RateLimit-*`가 나오지 않는다(RHCL 1.4.3).**
+  Limitador는 `--rate-limit-headers DRAFT_VERSION_03`으로 재기동되지만 429·200 응답 모두 헤더가 없었다. 설정은 Limitador 전체에
+  적용되므로 시험 후 원복한다(2-08-0).
+  원인은 Limitador v2.4.2의 `CheckRateLimit`(토큰 한도가 쓰는 Kuadrant RLS API)이 헤더를 항상 빈 목록으로 반환하는 데 있다.
+  업스트림 v2.6.0에서 지원이 추가되었다.
 - **로컬 bash 3.2(macOS)와 BSD awk.** 하네스는 로컬 실행 시 `/bin/bash` 3.2를 쓰므로 연관 배열(`declare -A`)과 `$(case ...)`가
   동작하지 않고, BSD awk는 괄호 없는 삼항 연산(`NR>1?",":""`)을 거부한다.
 

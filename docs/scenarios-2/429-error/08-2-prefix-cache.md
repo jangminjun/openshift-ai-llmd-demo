@@ -2,7 +2,7 @@
 
 **모듈:** 분산 환경 활용 > 서비스 거버넌스
 **대상:** `llmd-pd/qwen38-int4-pd`(prefill pod), MaaS 구독 `llmd-demo-sub`
-**상태:** 실행 대기
+**상태:** 실측 완료(2026-11-12)
 
 ## 목적
 
@@ -34,6 +34,20 @@ cd openshift-ai-llmd-demo/harness
 HARNESS_PROFILE=sno MAAS_MIT_ARMS=prefix ./harness.sh scenario2-08-mitigation   # prefill 재기동 2회
 ```
 
-## 결과
+## 결과 (2026-11-12)
 
-(실행 후 기록)
+| prefill prefix 캐시 | 질문 1 TTFT | 질문 2 TTFT(같은 문서) | 질문 2 `prompt_tokens`(차감 기준) |
+|---|---|---|---|
+| 꺼짐(기본) | 4.98초 | 4.95초 | 약 6,060 |
+| 켜짐(`--enable-prefix-caching`) | 5.11초 | **1.72초** (−65%) | 약 6,060 (변화 없음) |
+
+- 하이브리드 모델에서도 `--enable-prefix-caching`으로 prefill이 정상 기동하였고, 같은 문서의 두 번째 질문에서 TTFT가 65%
+  줄었다.
+- 질문 2의 `prompt_tokens`는 캐시 여부와 무관하게 같았다. MaaS 차감량은 줄지 않는다.
+- 응답의 `prompt_tokens_details.cached_tokens`는 보고되지 않았다(vLLM `--enable-prompt-tokens-details` 미설정). 캐시 적중은
+  TTFT 감소로 판단하였다.
+
+## 결론
+
+prefix 캐시는 반복 문서의 지연을 크게 줄이지만 MaaS 토큰 차감을 줄이지 않으므로 429 완화책이 아니다. 같은 문서를 여러 턴에
+다시 보내는 에이전트에서는 지연 개선을 위해 prefill에 `--enable-prefix-caching`을 명시한다(하이브리드 모델은 기본 꺼짐).

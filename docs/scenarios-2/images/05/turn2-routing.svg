@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" font-family="Apple SD Gothic Neo, AppleGothic, Noto Sans KR, Helvetica, sans-serif">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker><marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/></marker><marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker></defs>
+<rect width="1120" height="560" fill="#fcfcfb"/>
+<rect x="20" y="20" width="520" height="520" rx="12" fill="none" stroke="#c3c2b7" stroke-dasharray="6 4"/>
+<text x="280.0" y="52" font-size="19" fill="#0b0b0b" text-anchor="middle" font-weight="700">항상 분리 (threshold 0)</text>
+<rect x="150.0" y="76" width="260" height="56" rx="8" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"/>
+<text x="280.0" y="102" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">2번째 질문</text>
+<text x="280.0" y="122" font-size="13" fill="#52514e" text-anchor="middle">문서 + 질문1 + 응답1 + 질문2</text>
+<rect x="130.0" y="180" width="300" height="74" rx="8" fill="#f3f2ee" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="280.0" y="206" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">EPP</text>
+<text x="280.0" y="226" font-size="13" fill="#52514e" text-anchor="middle">always-disagg-pd-decider</text>
+<text x="280.0" y="244" font-size="13" fill="#52514e" text-anchor="middle">길이와 무관하게 분리</text>
+<path d="M280.0,132 L280.0,178" fill="none" stroke="#d9822b" stroke-width="2.2" marker-end="url(#ao)"/>
+<rect x="160.0" y="320" width="240" height="74" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="280.0" y="346" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">prefill pod</text>
+<text x="280.0" y="366" font-size="13" fill="#52514e" text-anchor="middle">앞의 대화: 캐시 적중</text>
+<text x="280.0" y="384" font-size="13" fill="#52514e" text-anchor="middle">질문2만 계산</text>
+<rect x="160.0" y="450" width="240" height="74" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="280.0" y="476" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">decode pod</text>
+<text x="280.0" y="496" font-size="13" fill="#52514e" text-anchor="middle">앞의 대화 KV 보유(1번째에 받음)</text>
+<text x="280.0" y="514" font-size="13" fill="#52514e" text-anchor="middle">토큰 생성</text>
+<path d="M280.0,254 L280.0,318" fill="none" stroke="#d9822b" stroke-width="2.2" marker-end="url(#ao)"/>
+<path d="M280.0,394 L280.0,448" fill="none" stroke="#52514e" stroke-width="2.2" marker-end="url(#ah)"/>
+<text x="290.0" y="420" font-size="13" fill="#52514e" text-anchor="start">KV 전체(약 3,700토큰분) 다시 전송 (NIXL)</text>
+<rect x="580" y="20" width="520" height="520" rx="12" fill="none" stroke="#c3c2b7" stroke-dasharray="6 4"/>
+<text x="840.0" y="52" font-size="19" fill="#0b0b0b" text-anchor="middle" font-weight="700">임계값 분리 (threshold 1000)</text>
+<rect x="710.0" y="76" width="260" height="56" rx="8" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"/>
+<text x="840.0" y="102" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">2번째 질문</text>
+<text x="840.0" y="122" font-size="13" fill="#52514e" text-anchor="middle">문서 + 질문1 + 응답1 + 질문2</text>
+<rect x="690.0" y="180" width="300" height="74" rx="8" fill="#f3f2ee" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="840.0" y="206" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">EPP</text>
+<text x="840.0" y="226" font-size="13" fill="#52514e" text-anchor="middle">prefix-based-pd-decider</text>
+<text x="840.0" y="244" font-size="13" fill="#52514e" text-anchor="middle">캐시 안 된 토큰 약 100 → 기준 미만</text>
+<path d="M840.0,132 L840.0,178" fill="none" stroke="#d9822b" stroke-width="2.2" marker-end="url(#ao)"/>
+<rect x="720.0" y="320" width="240" height="74" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="840.0" y="346" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">prefill pod</text>
+<text x="840.0" y="366" font-size="13" fill="#52514e" text-anchor="middle">앞의 대화: 캐시 적중</text>
+<text x="840.0" y="384" font-size="13" fill="#52514e" text-anchor="middle">질문2만 계산</text>
+<rect x="720.0" y="450" width="240" height="74" rx="8" fill="#ffffff" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="840.0" y="476" font-size="16" fill="#0b0b0b" text-anchor="middle" font-weight="700">decode pod</text>
+<text x="840.0" y="496" font-size="13" fill="#52514e" text-anchor="middle">앞의 대화 KV 보유(1번째에 받음)</text>
+<text x="840.0" y="514" font-size="13" fill="#52514e" text-anchor="middle">토큰 생성</text>
+<rect x="720.0" y="320" width="240" height="74" rx="8" fill="#fcfcfb" fill-opacity="0.75"/>
+<text x="840.0" y="410" font-size="13" fill="#898781" text-anchor="middle">사용 안 함</text>
+<path d="M690.0,225 C740,300 740,450 718.0,480" fill="none" stroke="#d9822b" stroke-width="2.2" marker-end="url(#ao)"/>
+<text x="596" y="352" font-size="14" fill="#d9822b" text-anchor="start" font-weight="700">prefill 생략</text>
+<text x="596" y="372" font-size="13" fill="#d9822b" text-anchor="start">decode가</text>
+<text x="596" y="390" font-size="13" fill="#d9822b" text-anchor="start">캐시 위에</text>
+<text x="596" y="408" font-size="13" fill="#d9822b" text-anchor="start">질문2만 계산</text>
+</svg>

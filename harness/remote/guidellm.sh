@@ -6,6 +6,8 @@
 # manifests/guidellm/guidellm-job.yaml. Runs on the bastion or locally (HARNESS_EXEC).
 #   LLMD_NAMESPACE / LLMD_NAME     target model (default llmd-test/llmd-test)
 #   GUIDELLM_VIA      direct (workload Service, no MaaS/EPP) | maas (status.url + API key, through EPP)
+#                     | gateway (as maas, but the Job resolves the MaaS host to the gateway ClusterIP via
+#                       hostAliases: skips the cloud LB and its 60 s idle timeout; same URL/SNI/HTTPRoute)
 #   GUIDELLM_PROFILE  concurrent | constant | poisson | sweep | synchronous | throughput (concurrent)
 #   GUIDELLM_STREAMS  concurrency levels for concurrent ("1,4,8,16")
 #   GUIDELLM_RATES    req/s levels for constant / poisson ("1,2,4")
@@ -30,11 +32,21 @@ URI=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.spec.model.uri}')
 TOKENIZER="${GUIDELLM_TOKENIZER:-${URI#hf://}}"
 case "$VIA" in
   direct) TARGET="https://${N}-kserve-workload-svc.${NS}.svc.cluster.local:8000" ;;
-  maas)   TARGET=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.status.url}')
+  maas|gateway)
+          TARGET=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.status.url}')
           oc get secret loadgen-token -n "$BNS" >/dev/null 2>&1 \
             || die "no MaaS API key: run 'harness.sh maas-register-model' and 'harness.sh maas-api-key'" ;;
-  *) die "GUIDELLM_VIA must be direct or maas" ;;
+  *) die "GUIDELLM_VIA must be direct, maas or gateway" ;;
 esac
+HOST_ALIASES=""
+if [ "$VIA" = gateway ]; then
+  GW_HOST=${TARGET#https://}; GW_HOST=${GW_HOST%%/*}
+  GW_IP=$(oc get svc -n openshift-ingress -l "gateway.networking.k8s.io/gateway-name=${MAAS_GATEWAY:-maas-default-gateway}" \
+    -o jsonpath='{.items[0].spec.clusterIP}')
+  [ -n "$GW_IP" ] || die "gateway Service for ${MAAS_GATEWAY:-maas-default-gateway} not found"
+  HOST_ALIASES="      hostAliases: [{ip: \"$GW_IP\", hostnames: [\"$GW_HOST\"]}]"
+  echo "   $GW_HOST -> $GW_IP (gateway ClusterIP, no cloud LB)"
+fi
 echo "== GuideLLM $RUN: $NS/$N ($MODEL) via $VIA -> $TARGET"
 
 oc get namespace "$BNS" >/dev/null 2>&1 || oc create namespace "$BNS" >/dev/null
@@ -85,6 +97,7 @@ spec:
     spec:
       restartPolicy: Never
       securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+${HOST_ALIASES}
       containers:
       - name: guidellm
         image: ${IMAGE}
@@ -109,7 +122,7 @@ spec:
         - {name: GUIDELLM__DEFAULT_RESULTS_DIR, value: /results/${RUN}}
         - {name: HF_HOME, value: /tmp/hf}
         - {name: COLUMNS, value: "220"}
-$( [ "$VIA" = maas ] && printf '        - name: API_KEY\n          valueFrom: {secretKeyRef: {name: loadgen-token, key: token}}\n' )
+$( [ "$VIA" != direct ] && printf '        - name: API_KEY\n          valueFrom: {secretKeyRef: {name: loadgen-token, key: token}}\n' )
         resources:
           requests: {cpu: "2", memory: 4Gi}
           limits: {cpu: "4", memory: 8Gi}

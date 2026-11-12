@@ -38,6 +38,9 @@
 #   grafana-dashboard                   publish remote/dashboards/<DASHBOARD>.json as a GrafanaDashboard (default llmd-pd-latency)
 #   llmd-tracing                        TRACING=on|off spec.tracing -> Tempo for LLMD_NAMESPACE/LLMD_NAME (default llmd-test),
 #                                       on: sends LLMD_TRACING_PROBE (3) requests and lists the services Tempo received
+#   scenario2-03-pd-load                GuideLLM loads on a P/D model + prefill/decode counters (S23_LOADS, GUIDELLM_VIA=gateway)
+#   scenario2-04-pd-decider             P/D decider threshold: short vs long prompts, prefill hits (S24_THRESHOLDS)
+#   scenario2-05-pd-prefix-cache        P/D + prefix cache: multi-turn, prefill hits per turn (S25_THRESHOLDS)
 #   scenario2-07-maas-ratelimit         MaaS token limit with long prompts (MAAS_RL_ARMS=E1..E4, see remote/scenario2-07-maas-ratelimit.sh)
 #   scenario2-08-mitigation             429 mitigations: limit sizing, concurrency cap, retry policy, subscription split (MAAS_MIT_ARMS=M1..M4)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
@@ -168,6 +171,26 @@ cmd_guidellm() {
 }
 cmd_llmd_loadgen() { run_bench llmd-loadgen.sh; }
 
+# Scenario 2-03: GuideLLM loads against a P/D model with prefill/decode counters before/after each load.
+# S23_LOADS ("2000/256 8000/128" = prompt/output tokens), GUIDELLM_VIA (gateway), GUIDELLM_STREAMS (1,4,8,16).
+# Needs the results locally (HARNESS_EXEC=local).
+cmd_scenario2_03() {
+  [ "$HARNESS_EXEC" = local ] || err "scenario2-03-pd-load reads GuideLLM results locally: use HARNESS_EXEC=local"
+  local l run dir="$HARNESS_DIR/results/scenario2-03"
+  export LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-pd}" LLMD_NAME="${LLMD_NAME:-qwen38-int4-pd}"
+  mkdir -p "$dir"
+  for l in ${S23_LOADS:-2000/256 8000/128}; do
+    run="$(date +%Y%m%d-%H%M%S)-p${l%/*}-o${l#*/}"
+    log "load prompt ${l%/*} / output ${l#*/} tokens (run $run)"
+    run_bench --eval "pd_counters $LLMD_NAMESPACE $LLMD_NAME" > "$dir/$run.before.json"
+    GUIDELLM_VIA="${GUIDELLM_VIA:-gateway}" GUIDELLM_PROMPT_TOKENS="${l%/*}" GUIDELLM_OUTPUT_TOKENS="${l#*/}" \
+      GUIDELLM_RUN_ID="$run" GUIDELLM_OUT="$dir" cmd_guidellm
+    run_bench --eval "pd_counters $LLMD_NAMESPACE $LLMD_NAME" > "$dir/$run.after.json"
+    python3 ./tools/pd-load-report.py "$dir/$run.before.json" "$dir/$run.after.json" "$dir/$run/benchmarks.json" \
+      | tee "$dir/$run.report.txt"
+  done
+}
+
 cmd_llmd_promql() {
   ssh_bastion "QUERY=$(printf '%q' "${QUERY:?set QUERY}") MONITORING_NAMESPACE='$MONITORING_NAMESPACE' bash -s" < ./remote/llmd-promql.sh
 }
@@ -274,6 +297,8 @@ cmd_scenario27() { run_bench scenario27-scorer-weights.sh; }
 cmd_scenario28() { run_bench scenario28-tokenizer.sh; }
 cmd_scenario29_shift() { LLMD_NAMESPACE="$S29_NS" run_bench scenario29-canary-shift.sh; }
 cmd_maas_checks() { run_bench maas-checks.sh; }
+cmd_scenario2_04() { run_bench scenario2-04-pd-decider.sh; }
+cmd_scenario2_05() { run_bench scenario2-05-pd-prefix-cache.sh; }
 cmd_scenario2_07() { run_bench scenario2-07-maas-ratelimit.sh; }
 cmd_scenario2_08() { run_bench scenario2-08-mitigation.sh; }
 
@@ -322,6 +347,9 @@ case "$cmd" in
   scenario26-llmd-tls)                cmd_scenario26 ;;
   scenario27-llmd-scorer-weights)     cmd_scenario27 ;;
   scenario28-llmd-tokenizer)          cmd_scenario28 ;;
+  scenario2-03-pd-load)               cmd_scenario2_03 ;;
+  scenario2-04-pd-decider)            cmd_scenario2_04 ;;
+  scenario2-05-pd-prefix-cache)       cmd_scenario2_05 ;;
   scenario2-07-maas-ratelimit)        cmd_scenario2_07 ;;
   scenario2-08-mitigation)            cmd_scenario2_08 ;;
   maas-checks)                        cmd_maas_checks ;;

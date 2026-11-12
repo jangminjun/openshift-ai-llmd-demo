@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="480" viewBox="0 0 900 480" font-family="Apple SD Gothic Neo, AppleGothic, Noto Sans KR, Helvetica, sans-serif">
+<rect width="900" height="480" fill="#fcfcfb"/>
+<text x="90" y="34" font-size="20" font-weight="700" fill="#0b0b0b">시나리오 2-04: decider 설정별 TTFT</text>
+<text x="90" y="58" font-size="14" fill="#52514e">막대 = TTFT p50, 가는 선 = p95. 막대 아래 = prefill pod 경유 건수 (20건 중)</text>
+<line x1="90" y1="360.0" x2="870" y2="360.0" stroke="#e1e0d9"/>
+<text x="80" y="365.0" font-size="13" fill="#898781" text-anchor="end">0.0</text>
+<line x1="90" y1="306.0" x2="870" y2="306.0" stroke="#e1e0d9"/>
+<text x="80" y="311.0" font-size="13" fill="#898781" text-anchor="end">0.5</text>
+<line x1="90" y1="252.0" x2="870" y2="252.0" stroke="#e1e0d9"/>
+<text x="80" y="257.0" font-size="13" fill="#898781" text-anchor="end">1.0</text>
+<line x1="90" y1="198.0" x2="870" y2="198.0" stroke="#e1e0d9"/>
+<text x="80" y="203.0" font-size="13" fill="#898781" text-anchor="end">1.5</text>
+<line x1="90" y1="144.0" x2="870" y2="144.0" stroke="#e1e0d9"/>
+<text x="80" y="149.0" font-size="13" fill="#898781" text-anchor="end">2.0</text>
+<line x1="90" y1="90.0" x2="870" y2="90.0" stroke="#e1e0d9"/>
+<text x="80" y="95.0" font-size="13" fill="#898781" text-anchor="end">2.5</text>
+<text x="26" y="225" font-size="14" fill="#52514e" text-anchor="middle" transform="rotate(-90 26 225)">TTFT (초)</text>
+<line x1="90" y1="360.0" x2="870" y2="360.0" stroke="#c3c2b7"/>
+<path d="M194.0,360.0 L194.0,307.51599999999996 Q194.0,303.51599999999996 198.0,303.51599999999996 L280.0,303.51599999999996 Q284.0,303.51599999999996 284.0,307.51599999999996 L284.0,360.0 Z" fill="#a3a29a"/>
+<line x1="239.0" y1="297.8" x2="239.0" y2="303.5" stroke="#52514e" stroke-width="2"/>
+<line x1="231.0" y1="297.8" x2="247.0" y2="297.8" stroke="#52514e" stroke-width="2"/>
+<text x="239.0" y="287.8" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">0.52초</text>
+<text x="239.0" y="382.0" font-size="13" fill="#52514e" text-anchor="middle">prefill 20/20</text>
+<path d="M286.0,360.0 L286.0,353.092 Q286.0,349.092 290.0,349.092 L372.0,349.092 Q376.0,349.092 376.0,353.092 L376.0,360.0 Z" fill="#2a78d6"/>
+<line x1="331.0" y1="339.0" x2="331.0" y2="349.1" stroke="#52514e" stroke-width="2"/>
+<line x1="323.0" y1="339.0" x2="339.0" y2="339.0" stroke="#52514e" stroke-width="2"/>
+<text x="331.0" y="329.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">0.10초</text>
+<text x="331.0" y="382.0" font-size="13" fill="#52514e" text-anchor="middle">prefill 0/20</text>
+<text x="285.0" y="410.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">짧은 요청 (약 60토큰)</text>
+<path d="M584.0,360.0 L584.0,133.096 Q584.0,129.096 588.0,129.096 L670.0,129.096 Q674.0,129.096 674.0,133.096 L674.0,360.0 Z" fill="#a3a29a"/>
+<line x1="629.0" y1="125.4" x2="629.0" y2="129.1" stroke="#52514e" stroke-width="2"/>
+<line x1="621.0" y1="125.4" x2="637.0" y2="125.4" stroke="#52514e" stroke-width="2"/>
+<text x="629.0" y="115.4" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">2.14초</text>
+<text x="629.0" y="382.0" font-size="13" fill="#52514e" text-anchor="middle">prefill 20/20</text>
+<path d="M676.0,360.0 L676.0,133.096 Q676.0,129.096 680.0,129.096 L762.0,129.096 Q766.0,129.096 766.0,133.096 L766.0,360.0 Z" fill="#2a78d6"/>
+<line x1="721.0" y1="126.3" x2="721.0" y2="129.1" stroke="#52514e" stroke-width="2"/>
+<line x1="713.0" y1="126.3" x2="729.0" y2="126.3" stroke="#52514e" stroke-width="2"/>
+<text x="721.0" y="116.3" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">2.14초</text>
+<text x="721.0" y="382.0" font-size="13" fill="#52514e" text-anchor="middle">prefill 20/20</text>
+<text x="675.0" y="410.0" font-size="15" font-weight="700" fill="#0b0b0b" text-anchor="middle">긴 요청 (약 2,000토큰)</text>
+<text x="355.0" y="252.0" font-size="14" fill="#2a78d6" font-weight="700">−81% (prefill 생략)</text>
+<text x="675.0" y="94.0" font-size="14" fill="#52514e" text-anchor="middle">변화 없음 (두 설정 모두 분리)</text>
+<rect x="90" y="439" width="16" height="14" rx="3" fill="#a3a29a"/>
+<text x="114" y="451" font-size="14" fill="#0b0b0b">항상 분리 (threshold 0)</text>
+<rect x="370" y="439" width="16" height="14" rx="3" fill="#2a78d6"/>
+<text x="394" y="451" font-size="14" fill="#0b0b0b">임계값 분리 (threshold 1000)</text>
+</svg>

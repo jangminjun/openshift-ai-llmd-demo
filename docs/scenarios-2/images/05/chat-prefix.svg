@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 0 1100 330" font-family="Apple SD Gothic Neo, AppleGothic, Noto Sans KR, Helvetica, sans-serif">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker><marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/></marker><marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker></defs>
+<rect width="1100" height="330" fill="#fcfcfb"/>
+<text x="40" y="36" font-size="19" fill="#0b0b0b" text-anchor="start" font-weight="700">채팅에서 앞의 대화는 다음 질문의 prefix가 된다</text>
+<text x="40" y="60" font-size="14" fill="#52514e" text-anchor="start">매 질문마다 지금까지의 대화 전체를 다시 보낸다. 앞부분은 이미 계산한 것이므로 KV 캐시를 재사용할 수 있다.</text>
+<text x="40" y="133" font-size="15" fill="#0b0b0b" text-anchor="start" font-weight="700">1번째 질문</text>
+<rect x="170" y="100" width="540.0" height="54" rx="6" fill="#2a78d6" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="440.0" y="124" font-size="14" fill="#ffffff" text-anchor="middle" font-weight="700">문서</text>
+<text x="440.0" y="143" font-size="12" fill="#ffffff" text-anchor="middle">약 3,000토큰</text>
+<rect x="714.0" y="100" width="54.0" height="54" rx="6" fill="#2a78d6" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="741.0" y="124" font-size="14" fill="#ffffff" text-anchor="middle" font-weight="700">질문1</text>
+<text x="741.0" y="143" font-size="12" fill="#ffffff" text-anchor="middle"></text>
+<text x="782.0" y="133" font-size="14" fill="#2a78d6" text-anchor="start" font-weight="700">→ 전부 새로 계산</text>
+<text x="40" y="233" font-size="15" fill="#0b0b0b" text-anchor="start" font-weight="700">2번째 질문</text>
+<rect x="170" y="200" width="540.0" height="54" rx="6" fill="#e4e3dd" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="440.0" y="224" font-size="14" fill="#0b0b0b" text-anchor="middle" font-weight="700">문서</text>
+<text x="440.0" y="243" font-size="12" fill="#52514e" text-anchor="middle">1번째에 계산함</text>
+<rect x="714.0" y="200" width="54.0" height="54" rx="6" fill="#e4e3dd" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="741.0" y="224" font-size="14" fill="#0b0b0b" text-anchor="middle" font-weight="700">질문1</text>
+<text x="741.0" y="243" font-size="12" fill="#52514e" text-anchor="middle"></text>
+<rect x="772.0" y="200" width="59.4" height="54" rx="6" fill="#e4e3dd" stroke="#c3c2b7" stroke-width="1.5"/>
+<text x="801.7" y="224" font-size="14" fill="#0b0b0b" text-anchor="middle" font-weight="700">응답1</text>
+<text x="801.7" y="243" font-size="12" fill="#52514e" text-anchor="middle"></text>
+<rect x="835.4" y="200" width="54.0" height="54" rx="6" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"/>
+<text x="862.4" y="224" font-size="14" fill="#ffffff" text-anchor="middle" font-weight="700">질문2</text>
+<text x="862.4" y="243" font-size="12" fill="#ffffff" text-anchor="middle"></text>
+<text x="903.4" y="225" font-size="14" fill="#d9822b" text-anchor="start" font-weight="700">→ 새로 계산할 부분</text>
+<text x="903.4" y="244" font-size="14" fill="#d9822b" text-anchor="start">   약 100토큰</text>
+<path d="M170,266 L170,276 L831.4,276 L831.4,266" fill="none" stroke="#52514e" stroke-width="1.5"/>
+<text x="500.7" y="298" font-size="14" fill="#52514e" text-anchor="middle">앞의 대화 = prefix (1번째 질문의 KV를 캐시에서 재사용)</text>
+</svg>

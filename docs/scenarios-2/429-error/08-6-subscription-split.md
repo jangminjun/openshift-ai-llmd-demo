@@ -2,7 +2,7 @@
 
 **모듈:** 분산 환경 활용 > 서비스 거버넌스
 **대상:** `llmd-pd/qwen38-int4-pd`, MaaS 구독 `llmd-demo-sub`(장문), `llmd-demo-sub-chat`(대화형)
-**상태:** 실행 중
+**상태:** 실측 완료(2026-11-12)
 
 ## 목적
 
@@ -52,6 +52,17 @@ cd openshift-ai-llmd-demo/harness
 HARNESS_PROFILE=sno MAAS_MIT_ARMS=split ./harness.sh scenario2-08-mitigation
 ```
 
-## 결과
+## 결과 (2026-11-12)
 
-(실행 후 기록)
+| 단문 키 | 단문 429 / 시도 | 단문 TTFT p50 | 장문 429 |
+|---|---|---|---|
+| (a) 장문과 같은 구독(`llmd-demo-sub`) | 6 / 72 | 10.8초 | 0 |
+| (b) 대화형 구독(`llmd-demo-sub-chat`) | **0 / 75** | 13.4초 | 0 |
+
+- 대화형 요청을 별도 구독으로 보내자 장문 차감에 의한 429가 사라졌다. 같은 사용자라도 구독이 다르면 카운터가 분리된다.
+- 단문 TTFT(10~13초)는 줄지 않았다. 두 구독이 같은 `LLMInferenceService`(같은 prefill pod)를 쓰므로 GPU 대기는 남는다.
+
+## 결론
+
+구독 분리는 한도 간섭(429)을 없애는 가장 간단한 방법이다. 장문 에이전트와 대화형 요청에 서로 다른 구독(API 키)을 발급한다.
+지연 간섭까지 없애려면 대화형 요청용 `LLMInferenceService`(GPU 풀)를 분리해야 한다.

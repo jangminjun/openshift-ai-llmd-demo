@@ -1,7 +1,7 @@
 # Scenario 2-08: root cause and mitigations of 429s after long-prompt calls behind MaaS token limits.
 # Temporarily rewrites MaaSSubscription token limits (and vLLM prefill flags for prefix/chunk), runs a
 # workload plan from an in-cluster Job (API keys stay in Secrets) and restores everything on exit.
-# Prepended with lib/bench.sh. Arms (MAAS_MIT_ARMS, docs/scenarios-2/08-*):
+# Prepended with lib/bench.sh. Arms (MAAS_MIT_ARMS, docs/scenarios-2/429-error/08-*):
 #   single    H1  one request larger than the window limit, then a short probe           (08)
 #   io        H2  input-heavy vs output-heavy requests: both charged as total_tokens       (08)
 #   saturate  H3  no token limit, long requests at high concurrency: who returns 429?      (08)
@@ -11,6 +11,8 @@
 #   retry     M5  sequential long tasks: immediate / fixed / exponential-backoff retry     (08-4)
 #   conc      M6  same long tasks at concurrency 4/2/1 while a short probe runs            (08-5)
 #   split     S1  long burst + short probe on the same vs a separate subscription          (08-6)
+#   headers   -   Limitador rate-limit headers (X-RateLimit-Reset): retry=reset vs backoff  (08-0)
+#                 sets Limitador spec.rateLimitHeaders=DRAFT_VERSION_03 (cluster-wide), restored on exit
 # Limits are written as "LIMIT/WINDOW[+LIMIT/WINDOW]", e.g. "50000/15s+100000/2m".
 #   MAAS_MIT_ARMS ("single io saturate limit retry conc split"; prefix/chunk restart prefill, run them explicitly)
 #   MAAS_MIT_LIMITS ("20000/15s 25000/15s 50000/15s 50000/15s+80000/2m") MAAS_MIT_SECONDS (90) MAAS_MIT_SESSIONS (2)
@@ -28,7 +30,7 @@ oc get secret loadgen-token -n "$BENCH_NS" >/dev/null 2>&1 || die "no MaaS API k
 SUBS="$SUB"
 case " $ARMS " in *" split "*) SUBS="$SUB $SUB2"
   oc get maassubscription "$SUB2" -n "$SUBNS" >/dev/null 2>&1 && oc get secret loadgen-token-chat -n "$BENCH_NS" >/dev/null 2>&1 \
-    || die "split needs MaaSSubscription $SUBNS/$SUB2 and Secret $BENCH_NS/loadgen-token-chat (see docs/scenarios-2/08-6)";;
+    || die "split needs MaaSSubscription $SUBNS/$SUB2 and Secret $BENCH_NS/loadgen-token-chat (see docs/scenarios-2/429-error/08-6)";;
 esac
 URL="$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.status.url}')/v1/chat/completions"
 MODEL=$(oc get llminferenceservice "$N" -n "$NS" -o jsonpath='{.spec.model.name}')
@@ -60,7 +62,14 @@ set_limits() {  # <spec> [<subscription>...]: patch, then wait for the TokenRate
   echo "  limits -> $spec on ${*:-$SUB} (waiting 75 s for policy + cache)"; sleep 75
 }
 PREFILL_ARGS=$(vllm_args "$NS" "$N" prefill)
+RLH_ORIG=$(oc get limitador limitador -n kuadrant-system -o jsonpath='{.spec.rateLimitHeaders}')
+set_rl_headers() {  # <NONE|DRAFT_VERSION_03|""(remove)>: Limitador --rate-limit-headers, waits for the rollout
+  if [ -n "$1" ]; then oc patch limitador limitador -n kuadrant-system --type=merge -p "{\"spec\":{\"rateLimitHeaders\":\"$1\"}}" >/dev/null
+  else oc patch limitador limitador -n kuadrant-system --type=json -p '[{"op":"remove","path":"/spec/rateLimitHeaders"}]' >/dev/null 2>&1 || true; fi
+  sleep 10; oc rollout status deploy/limitador-limitador -n kuadrant-system --timeout=180s >/dev/null
+}
 restore() {
+  [ "$(oc get limitador limitador -n kuadrant-system -o jsonpath='{.spec.rateLimitHeaders}')" = "$RLH_ORIG" ] || { set_rl_headers "$RLH_ORIG"; echo "  Limitador rateLimitHeaders restored -> ${RLH_ORIG:-unset}"; }
   [ "$(vllm_args "$NS" "$N" prefill)" = "$PREFILL_ARGS" ] || restore_prefill
   local s o; for s in $SUBS; do eval "o=\$ORIG_$(sub_n "$s")"; patch_limits "$s" "$o" 2>/dev/null; echo "  limits restored $s -> $o"; done
 }
@@ -83,25 +92,30 @@ def call(g, words, seed, question="Summarize."):
             "messages": [{"role": "user", "content": " ".join(rng.choice(VOC) + rng.choice("abcdefghij") for _ in range(words)) + "\n" + question}]}
     r = urllib.request.Request(E("URL"), json.dumps(body).encode(),
         {"Authorization": "Bearer " + KEYS[g["key"]], "Content-Type": "application/json"})
-    t0 = time.time(); code = 0; usage = None; ttft = None
+    t0 = time.time(); code = 0; usage = None; ttft = None; hdr = {}
+    rl = lambda hs: {k.lower(): v for k, v in hs if "ratelimit" in k.lower() or "retry" in k.lower()}
     try:
         with urllib.request.urlopen(r, context=ctx, timeout=int(E("TIMEOUT", "300"))) as resp:
-            code = resp.status
+            code = resp.status; hdr = rl(resp.getheaders())
             for line in resp:
                 if line.startswith(b"data:") and line[5:].strip() != b"[DONE]":
                     d = json.loads(line[5:]); usage = d.get("usage") or usage
                     if ttft is None and any((c.get("delta") or {}).get("content") for c in d.get("choices") or []):
                         ttft = time.time() - t0
-    except urllib.error.HTTPError as e: code = e.code
+    except urllib.error.HTTPError as e: code = e.code; hdr = rl(e.headers.items())
     except Exception: code = -1
     u = usage or {}
     return {"t": round(t0 - T0, 2), "dur": round(time.time() - t0, 2), "code": code, "tokens": u.get("total_tokens"),
             "prompt": u.get("prompt_tokens"), "completion": u.get("completion_tokens"),
-            "cached": (u.get("prompt_tokens_details") or {}).get("cached_tokens"), "ttft": ttft and round(ttft, 2)}
+            "cached": (u.get("prompt_tokens_details") or {}).get("cached_tokens"), "ttft": ttft and round(ttft, 2), "hdr": hdr}
 def log(**kw):
     with lock: print("REQ " + json.dumps(kw), flush=True)
-def wait_for(g, k):  # seconds to wait before retry k (k = 0 for the first retry)
+def wait_for(g, k, hdr=None):  # seconds to wait before retry k (k = 0 for the first retry)
     p = g.get("retry", "none")
+    if p == "reset":  # X-RateLimit-Reset (seconds to window reset) + 0.2 s; backoff if the header is missing
+        r = (hdr or {}).get("x-ratelimit-reset")
+        if r is not None: return float(r) + 0.2
+        p = "backoff"
     if p == "immediate": return 0.2
     if p == "fixed": return g.get("retry_s", 1)
     if p == "backoff": return min(g.get("cap", 15), g.get("retry_s", 1) * 2 ** k) * random.uniform(0.5, 1.0)
@@ -112,7 +126,7 @@ def task(g, tid, words, seed=None, question="Summarize."):
         x = call(g, words, hash((g["name"], tid, k, time.time())) if seed is None else seed, question)
         first = x["t"] if first is None else first
         log(g=g["name"], task=tid, attempt=k, done=x["code"] != 429, latency=round(x["t"] + x["dur"] - first, 2), **x)
-        w = wait_for(g, k) if x["code"] == 429 else None
+        w = wait_for(g, k, x["hdr"]) if x["code"] == 429 else None
         if w is None: return
         time.sleep(w); k += 1
 def agent(g, sid):  # loop: one long task, then `followups` short tasks
@@ -134,7 +148,7 @@ def pairs(g):  # `docs` documents, each asked `questions` in turn (same prefix -
     for i in range(g["docs"]):
         for j, q in enumerate(g["questions"]):
             task(g, f"d{i}-q{j}", g["words"], seed=1000 * g.get("seed", 1) + i, question=q)
-plan = json.loads(E("PLAN")); workers = []; done = threading.Event()
+plan = json.loads(E("PLAN")); workers = []; done = threading.Event(); workers_done = threading.Event()
 for g in plan:
     if g["kind"] == "agent":
         workers += [threading.Thread(target=agent, args=(g, s)) for s in range(g["sessions"])]
@@ -145,13 +159,14 @@ for g in plan:
 [w.start() for w in workers]
 probes = [g for g in plan if g["kind"] == "probe"]
 def probe(g):  # open loop: a short request every `interval` s (not waiting for the previous one) until
-    i = 0; ts = []   # the other groups finish + `tail` s; no retry
+    i = 0; ts = []   # the other groups finish + `tail` s; no retry. after_workers: start once they finish
+    if g.get("after_workers"): workers_done.wait()
     while not done.is_set():
         th = threading.Thread(target=task, args=(dict(g, retry="none"), f"p{i}", g.get("short_words", 20)))
         th.start(); ts.append(th); i += 1; time.sleep(g.get("interval", 1))
     [th.join() for th in ts]
 pt = [threading.Thread(target=probe, args=(g,)) for g in probes]; [p.start() for p in pt]
-[w.join() for w in workers]; time.sleep(probes[0].get("tail", 5) if probes else 0); done.set(); [p.join() for p in pt]
+[w.join() for w in workers]; workers_done.set(); time.sleep(probes[0].get("tail", 5) if probes else 0); done.set(); [p.join() for p in pt]
 PYEOF
 )" --dry-run=client -o yaml | oc apply -f - >/dev/null
   oc delete job mit-probe -n "$BENCH_NS" --ignore-not-found --wait=true >/dev/null
@@ -188,8 +203,9 @@ import sys, json
 lab, spec = sys.argv[1], sys.argv[2]
 rows = sorted((json.loads(l) for l in sys.stdin), key=lambda r: r["t"])
 for r in rows:
-    print("  %-10s %-6s %-8s t=%6.1fs dur=%6.2fs ttft=%s code=%s tokens=%s prompt=%s completion=%s cached=%s" % (
-        lab, r["g"], r["task"], r["t"], r["dur"], r.get("ttft"), r["code"], r["tokens"], r.get("prompt"), r.get("completion"), r.get("cached")))
+    print("  %-10s %-6s %-8s t=%6.1fs dur=%6.2fs ttft=%s code=%s tokens=%s prompt=%s completion=%s cached=%s %s" % (
+        lab, r["g"], r["task"], r["t"], r["dur"], r.get("ttft"), r["code"], r["tokens"], r.get("prompt"), r.get("completion"), r.get("cached"),
+        json.dumps(r["hdr"]) if r.get("hdr") else ""))
 # fixed-window replay per subscription key: max tokens charged inside one window (first limit of the spec)
 lim, win = spec.split("+")[0].split("/"); lim = int(lim)
 win = float(win[:-1]) * {"s": 1, "m": 60, "h": 3600}[win[-1]]
@@ -226,10 +242,10 @@ restore_prefill() {
 UNLIMITED="1000000000/1h"
 for arm in $ARMS; do case $arm in
   single) L=8000/15s; set_limits "$L"
-      say "single: one long request (~12k tokens) with limit $L, then a short probe every 1 s"
-      run_plan "single" "$L" "[{\"name\":\"long\",\"key\":\"A\",\"kind\":\"batch\",\"tasks\":1,\"conc\":1,\"words\":$WORDS,\"retry\":\"none\"},{\"name\":\"short\",\"key\":\"A\",\"kind\":\"probe\",\"interval\":1,\"tail\":25}]"
+      say "single: one long request (~12k tokens) with limit $L, then a short probe every 1 s after it completes"
+      run_plan "single" "$L" "[{\"name\":\"long\",\"key\":\"A\",\"kind\":\"batch\",\"tasks\":1,\"conc\":1,\"words\":$WORDS,\"retry\":\"none\"},{\"name\":\"short\",\"key\":\"A\",\"kind\":\"probe\",\"interval\":1,\"tail\":25,\"after_workers\":true}]"
       sleep 20 ;;
-  io) L=5000/5m; set_limits "$L"
+  io) L=4000/5m; set_limits "$L"
       say "io (a) input-heavy: 3 x (~2.4k prompt + 32 output), limit $L"
       run_plan "io:input" "$L" "[{\"name\":\"input\",\"key\":\"A\",\"kind\":\"batch\",\"tasks\":3,\"conc\":1,\"words\":1200,\"retry\":\"none\"}]"
       sleep 300   # let the 5 m window that started at the first charge expire
@@ -250,6 +266,13 @@ for arm in $ARMS; do case $arm in
         run_plan "prefix:$mode" "$UNLIMITED" "[{\"name\":\"doc\",\"key\":\"A\",\"kind\":\"pairs\",\"docs\":5,\"words\":3000,\"seed\":$(date +%s),\"questions\":[\"Summarize.\",\"List three keywords.\"]}]"
       done
       restore_prefill ;;
+  headers) set_rl_headers DRAFT_VERSION_03; L="${MAAS_MIT_RETRY_LIMIT:-20000/15s}"; set_limits "$L"
+      for p in ${MAAS_MIT_HEADER_POLICIES:-reset backoff}; do
+        case $p in backoff) R="\"retry\":\"backoff\",\"retry_s\":1,\"cap\":15";; *) R="\"retry\":\"$p\"";; esac
+        say "headers: $TASKS sequential long tasks, retry=$p, limit $L, Limitador rate-limit headers on"
+        run_plan "headers:$p" "$L" "[{\"name\":\"long\",\"key\":\"A\",\"kind\":\"batch\",\"tasks\":$TASKS,\"conc\":1,\"words\":$WORDS,$R}]"
+        sleep 20
+      done ;;
   chunk) set_limits "$UNLIMITED"
       for b in ${MAAS_MIT_CHUNK:-2048 8192}; do
         set_vllm_flag "$NS" "$N" max-num-batched-tokens "$b" prefill

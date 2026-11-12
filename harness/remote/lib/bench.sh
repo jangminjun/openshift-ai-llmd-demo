@@ -130,6 +130,37 @@ brief() {  # <summary-json> -> compact line (drops timeline)
   printf '%s' "$1" | "$PY" -c 'import sys,json; s=json.load(sys.stdin); s.pop("timeline",None); s.pop("errors",None); print("  "+json.dumps(s))'
 }
 
+# pd_counters <ns> <name>: P/D vLLM counters as JSON {"prefill": {...}, "decode": {...}}, summed over the pods
+# of each role (llm-d.ai/role). prefill vLLM :8000, decode vLLM :8001 (the routing sidecar owns :8000), https.
+pd_counters() {
+  local ns=$1 n=$2 role port p
+  local re='^vllm:(request_success_total|prompt_tokens_total|generation_tokens_total|prefix_cache_hits_total|prefix_cache_queries_total|nixl_xfer_time_seconds_count|nixl_bytes_transferred_sum|nixl_num_failed_transfers_total|nixl_num_kv_expired_reqs_total|num_preemptions_total)'
+  for role in prefill decode; do
+    port=8000; [ "$role" = decode ] && port=8001
+    for p in $(oc get pods -n "$ns" -l "llm-d.ai/role=$role" -o name | grep "/${n}-"); do
+      oc exec -n "$ns" "$p" -c main -- curl -sk "https://localhost:$port/metrics" 2>/dev/null | grep -E "$re" | sed "s/^/$role /"
+    done
+  done | "$PY" -c '
+import sys, json, re
+out = {"prefill": {}, "decode": {}}
+for line in sys.stdin:
+    role, rest = line.split(" ", 1); name, val = rest.rsplit(" ", 1)
+    k = re.sub(r"\{.*", "", name).replace("vllm:", "")
+    out[role][k] = out[role].get(k, 0.0) + float(val)
+print(json.dumps(out))'
+}
+# pd_delta <before-json> <after-json>: one line of counter increments (prefill requests, decode prompt tokens, NIXL)
+pd_delta() {
+  "$PY" -c '
+import sys, json
+a, b = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+d = {r: {k: b[r].get(k, 0) - a[r].get(k, 0) for k in b[r]} for r in b}
+print("prefill_requests=%d prefill_prompt_tokens=%d decode_requests=%d decode_prompt_tokens=%d nixl_xfers=%d nixl_failed=%d" % (
+  d["prefill"].get("request_success_total", 0), d["prefill"].get("prompt_tokens_total", 0),
+  d["decode"].get("request_success_total", 0), d["decode"].get("prompt_tokens_total", 0),
+  d["decode"].get("nixl_xfer_time_seconds_count", 0), d["decode"].get("nixl_num_failed_transfers_total", 0)))' "$1" "$2"
+}
+
 # ---------- LLMInferenceService / EPP ----------
 wait_isvc() {  # <ns> <name>: controller caught up + Ready + workloads rolled out
   local ns=$1 n=$2
@@ -180,24 +211,32 @@ vllm_args() {
   local base=.spec.template; [ "${3:-decode}" = prefill ] && base=.spec.prefill.template
   oc get llminferenceservice "$2" -n "$1" -o jsonpath="{${base}.containers[0].env[?(@.name==\"VLLM_ADDITIONAL_ARGS\")].value}"
 }
-# set_vllm_flag <ns> <name> <flag> <value|on|default> [decode|prefill]: rewrites --<flag>[=<value>] in
-# VLLM_ADDITIONAL_ARGS ("on" = flag without value, "default" removes it); restart via rollout_begin/rollout_end.
+# set_vllm_flag <ns> <name> <flag> <value|on|default> [decode|prefill|both]: rewrites --<flag>[=<value>] in
+# VLLM_ADDITIONAL_ARGS ("on" = flag without value, "default" removes it); one restart via rollout_begin/rollout_end
+# ("both" changes decode and prefill together).
 set_vllm_flag() {
-  local ns=$1 n=$2 f=$3 v=$4 role=${5:-decode} cur new patch
-  cur=$(vllm_args "$ns" "$n" "$role")
-  new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}(=[^ ]+)?( |$)/\2/; s/^ //")
-  case $v in default) ;; on) new="$new --${f}" ;; *) new="$new --${f}=$v" ;; esac
-  [ "$new" = "$cur" ] && { echo "  vLLM args ($role) unchanged ($cur)"; return; }
-  patch=$(oc get llminferenceservice "$n" -n "$ns" -o json | "$PY" -c '
+  local ns=$1 n=$2 f=$3 v=$4 roles=${5:-decode} role cur new patch="[]" changed=""
+  [ "$roles" = both ] && roles="decode prefill"
+  for role in $roles; do
+    cur=$(vllm_args "$ns" "$n" "$role")
+    new=$(printf '%s' "$cur" | sed -E "s/ ?--${f}(=[^ ]+)?( |$)/\\2/; s/^ //")
+    case $v in default) ;; on) new="$new --${f}" ;; *) new="$new --${f}=$v" ;; esac
+    [ "$new" = "$cur" ] && continue
+    changed="$changed $role"
+    patch=$(oc get llminferenceservice "$n" -n "$ns" -o json | "$PY" -c '
 import sys, json
-d, role, new = json.load(sys.stdin), sys.argv[1], sys.argv[2]
+d, role, new, patch = json.load(sys.stdin), sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 base = "/spec/prefill/template" if role == "prefill" else "/spec/template"
 spec = d["spec"]["prefill"]["template"] if role == "prefill" else d["spec"]["template"]
 i = [e["name"] for e in spec["containers"][0]["env"]].index("VLLM_ADDITIONAL_ARGS")
-print(json.dumps([{"op": "replace", "path": "%s/containers/0/env/%d/value" % (base, i), "value": new}]))' "$role" "$new")
+patch.append({"op": "replace", "path": "%s/containers/0/env/%d/value" % (base, i), "value": new})
+print(json.dumps(patch))' "$role" "$new" "$patch")
+    echo "  vLLM args ($role) -> $new"
+  done
+  [ -n "$changed" ] || { echo "  vLLM args unchanged (--$f $v)"; return; }
   rollout_begin "$ns" "$n"
   oc patch llminferenceservice "$n" -n "$ns" --type=json -p "$patch" >/dev/null
-  echo "  vLLM args ($role) -> $new (restart)"
+  echo "  restart:$changed"
   rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"
 }
 set_max_num_seqs() { set_vllm_flag "$1" "$2" max-num-seqs "$3"; }
