@@ -44,6 +44,17 @@ HARNESS_PROFILE=sno KEY_NAME=llmd-loadgen-chat KEY_SECRET=loadgen-token-chat KEY
 ## 남은 일
 
 - 2-08 실험은 모두 완료되었다. 미확인 항목: 2-08-5 동시 2의 단문 502 1건, ELB 유휴 타임아웃 실제 값.
+- 2-08-8 EPP Flow Control 실행 계획(예상 1.5~2시간, Flow Control이 동작하지 않으면 최대 약 3시간):
+
+  | 단계 | 내용 | 예상 |
+  |---|---|---|
+  | 1. 사전 확인 | Flow Control 활성 여부, P/D에서 포화 판정 대상(prefill/decode), `InferenceObjective` CRD 존재 | 20~30분 |
+  | 2. 스크립트 | `scenario2-08-mitigation.sh`에 `flowctl` arm 추가: InferenceObjective 2개(interactive 100, batch 0), probe에 `x-llm-d-inference-objective` 헤더, EPP 설정 원복 | 30~40분 |
+  | 3. 실행 | 기본 vs 우선순위 적용, 조건당 약 5분. EPP만 재기동(1~2분), vLLM 재기동 없음 | 15~20분 |
+  | 4. 문서 | 템플릿(목적·설정·실험설계·결과·결론)으로 결과 표, TTFT 그래프, 결론 작성 | 20~30분 |
+
+  위험 요소: 2-08 `saturate`(동시 48)에서도 EPP 큐잉이 없었다. 기본 포화 기준으로 큐가 생기지 않으면 `concurrency-detector`로
+  바꾸고 기준값을 조정한다(+30~60분).
 
 ## 기타 미완
 
