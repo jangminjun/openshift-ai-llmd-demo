@@ -97,11 +97,11 @@ flowchart LR
 ### scenarios-2 (RHDP sandbox1343, 하네스 `HARNESS_PROFILE=sno`)
 
 RHOAI 3.5.2, SNO 제어 평면(g6.8xlarge) + GPU 워커 g6.12xlarge(L4 × 4) 2대. 대상 모델은 RedHatAI Qwen3.8-27B(BF16, INT4,
-NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness.sh grafana-dashboard`)로 한다.
+NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness.sh grafana-dashboard`)로 한다. 요약과 결론은 [docs/scenarios-2/README.md](docs/scenarios-2/README.md)에 있다.
 
 | # | 기능 | 검증 내용 | 결과 | 매니페스트 |
 |---|---|---|---|---|
-| 2-00 | [P/D 분리 × 텐서 병렬화 준비 작업](docs/scenarios-2/00-pd-disaggregation-setup.md) | 27B 모델을 TP2/TP4로 나누어 P/D 구성, 정밀도 vs 4비트 양자화 비교 | INT4 TP2 단일 인스턴스 동작 확인(KV 373,321 토큰). P/D 미실행 | `manifests/pd/` |
+| 2-00 | [P/D 분리 × 텐서 병렬화 준비 작업](docs/scenarios-2/00-pd-disaggregation-setup.md) | 27B 모델을 TP2/TP4로 나누어 P/D 구성, 정밀도 vs 4비트 양자화 비교 | INT4 P/D(prefill TP2 + decode TP2) 구성. 하이브리드 모델 필수 설정(DS conv layout, NIXL side channel) | `manifests/pd/` |
 | 2-01 | [GuideLLM 부하 생성기](docs/scenarios-2/01-guidellm-loadgen.md) | GuideLLM 0.8.1을 OpenShift Job으로 실행, direct·MaaS 경로, 내장 시나리오 | INT4 TP2에서 동시 1→4: 출력 26.0→74.9 tok/s, ITL 35→40ms | `./harness.sh guidellm`, `manifests/guidellm/` |
 | 2-02 | [P/D 요청 경로](docs/scenarios-2/02-pd-request-path.md) | 요청 1건이 prefill → KV(NIXL) → decode로 처리되는지 | EPP·prefill·decode가 한 trace로 연결. NIXL 기본 주소(localhost) 때문에 KV 전달 전부 실패 → pod IP 지정 후 성공(전송당 약 103MB, 290MB/s) | `manifests/pd/qwen38-int4-pd.yaml` |
 | 2-03 | [부하 하 P/D 동작](docs/scenarios-2/03-pd-under-load.md) | GuideLLM 동시 1~16에서 분리율, KV 전달 실패, decode ITL | 분리 정상(KV 실패 0). 8K 프롬프트에서 TTFT 7 → 27초에도 ITL 35.9ms 유지. 병목은 prefill | `./harness.sh scenario2-03-pd-load` |
