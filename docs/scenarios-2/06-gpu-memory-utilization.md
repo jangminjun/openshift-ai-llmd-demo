@@ -2,7 +2,7 @@
 
 **모듈:** 분산 환경 활용 > 자원 계획
 **대상:** `llmd-pd/qwen38-int4-pd`(INT4, prefill TP2 + decode TP2, L4 24GB), 부하 생성기 GuideLLM(시나리오 2-01)
-**상태:** 설계, 미실행. 하위 시나리오 2-06-1~2-06-5
+**상태:** 실행 완료(2026-11-12~13). 하위 시나리오 2-06-1~2-06-6
 
 ## 목적
 
@@ -46,6 +46,7 @@ OOM 위험이 크다.
 | 2-06-3 | prefill 배치 토큰 축소 | prefill | `--max-num-batched-tokens=2048` | [06-3](06-3-prefill-batched-tokens.md) |
 | 2-06-4 | prefill 동시 요청 축소 | prefill | `--max-num-seqs=8` | [06-4](06-4-prefill-max-num-seqs.md) |
 | 2-06-5 | 통합 | prefill·decode | 2-06-1~4를 모두 적용 | [06-5](06-5-role-memory-combined.md) |
+| 2-06-6 | EPP Flow Control로 KV 포화 회피 | decode·EPP | decode util 0.75 + `concurrency-detector` | [06-6](06-6-epp-flow-control.md) |
 
 기준(baseline)은 현재 운영값(두 역할 모두 util 0.85, 그 밖의 값은 기본)이다. 각 단계는 해당 역할만 재기동하며, 부하는
 2-03의 L1(2,000/256)·L2(8,000/128)를 쓴다.
@@ -77,5 +78,31 @@ increase(kube_pod_container_status_restarts_total{namespace="llmd-pd", container
 oc logs -n llmd-pd -l llm-d.ai/role=prefill -c main | grep -E 'Model loading took|Available KV cache memory|GPU KV cache size|CUDA graph memory|torch.compile took|out of memory'
 oc logs -n llmd-pd -l llm-d.ai/role=decode  -c main | grep -E 'Available KV cache memory|GPU KV cache size|CUDA graph memory|out of memory'
 oc get pods -n llmd-pd -l 'llm-d.ai/role in (prefill,decode)'      # OOM이면 CrashLoopBackOff, RESTARTS 증가
-cd openshift-ai-llmd-demo/harness && HARNESS_PROFILE=sno ./harness.sh scenario2-03-pd-load   # L1·L2 부하
+cd openshift-ai-llmd-demo/harness && HARNESS_PROFILE=sno ./harness.sh scenario2-06-memory   # 설정별 재기동 + L1·L2 부하
+# 일부만: S26_CONFIGS="base r1" ./harness.sh scenario2-06-memory
 ```
+
+## 결과 요약
+
+모든 구성이 OOM·재기동 없이 기동했다. L1·L2 부하에서 preemption과 NIXL 실패는 0이었다.
+
+| # | 구성 | 메모리 변화 | 지연·처리량 | 판정 |
+|---|---|---|---|---|
+| 2-06-1 R1 | prefill 0.75, decode 0.90 | decode KV +14.4%, prefill GPU −2.9GiB | 변화 없음 | 권장 |
+| 2-06-1 R2 | decode 0.95 | decode KV +28.8%, 남은 GPU 약 2.0GiB | 변화 없음 | 한계 확인만 |
+| 2-06-2 E1 | prefill `--enforce-eager` | prefill graph 0, KV +2.19GiB, 기동 145→64초 | L2 처리량 −13~22% | 비권장 |
+| 2-06-3 B1 | prefill 배치 토큰 2048 | 변화 없음(기본값과 같음) | 변화 없음 | 효과 없음 |
+| 2-06-4 S1 | prefill `--max-num-seqs=8` | prefill graph −0.68GiB, KV +7.2% | 변화 없음 | 권장 |
+| 2-06-5 C1 | 1~4 통합 | decode KV +14.4%, prefill GPU −1.7GiB | L2 처리량 −13%(eager 때문) | eager 제외 시 권장 |
+| 2-06-6 F2 | decode 0.75 + Flow Control(16) | decode KV −29% | 장문 부하에서 preemption 83→0, 처리량 +76% | 권장(장문 부하) |
+
+**실행 세션 간 편차.** 같은 기본 구성의 L1 동시 16 TTFT p50이 10.4초(11-12)와 13.4초(11-13)로 달랐다. 따라서 각 구성은 같은 세션의 기준과만 비교한다.
+
+## 결론
+
+- L4 P/D의 권장 설정: prefill util 0.75 + `--max-num-seqs=8`, decode util 0.90. 이 조합 자체는 미실행이다.
+- 장문 출력이 decode KV를 채우는 부하에서는 decode util을 올리기보다 Flow Control로 입장 수를 제한한다(2-06-6).
+- prefill `--enforce-eager`는 기동 시간만 줄이고 처리량을 떨어뜨린다.
+- L4에서 `--max-num-batched-tokens` 기본값은 이미 2048이다.
+
+결과 로그는 `harness/results/scenario2-06/`(git 제외)에 있다.

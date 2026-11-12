@@ -2,7 +2,7 @@
 
 **모듈:** 분산 환경 활용 > 자원 계획
 **대상:** `llmd-pd/qwen38-int4-pd`(prefill TP2 + decode TP2, L4 24GB)
-**상태:** 설계, 미실행
+**상태:** 실행 완료(2026-11-12~13)
 
 ## 목적
 
@@ -49,3 +49,27 @@ oc get llminferenceservice qwen38-int4-pd -n llmd-pd -o jsonpath='{.metadata.gen
 ## 원복
 
 기준 인자([manifests/pd/qwen38-int4-pd.yaml](../../manifests/pd/qwen38-int4-pd.yaml))로 되돌린다.
+
+## 결과
+
+기준은 같은 세션의 2-06-3 B1(기본값과 동일한 구성)이다.
+
+| 항목 | 기준 | C1 |
+|---|---|---|
+| 기동 | 성공 | 성공(541초), OOM 없음 |
+| prefill KV | 7.64GiB, 373,321토큰 | 7.63GiB, 372,150토큰 |
+| prefill GPU 사용 | 18,792MiB | 17,058MiB(−1,734MiB) |
+| prefill 엔진 초기화 | 145초 | 64초 |
+| decode KV | 373,321토큰 | 427,154토큰(+14.4%) |
+| decode GPU 사용 | 18,790MiB | 19,910MiB |
+| L1 동시 16 TTFT p50, ITL p50, 출력 tok/s | 13.37초, 45.8ms, 128.0 | 15.01초, 46.7ms, 119.5(−6.6%) |
+| L2 동시 1 TTFT p50 | 7.24초 | 7.58초(+4.7%) |
+| L2 동시 4+ 출력 tok/s | 17.1 | 14.9(−13%) |
+| preemption, NIXL 실패 | 0, 0 | 0, 0 |
+
+## 결론
+
+- C1은 OOM 없이 기동했다. decode KV가 14.4% 늘고, prefill의 vLLM 밖 여유가 약 1.7GiB 늘었다.
+- 지연 기준(5% 이내)은 충족하지 못했다. L1 처리량 −6.6%, L2 처리량 −13%이다.
+- 손실의 원인은 `--enforce-eager`이다. C1의 부하 수치는 2-06-2 E1과 같다.
+- 권장 구성은 C1에서 `--enforce-eager`를 뺀 것이다(prefill util 0.75 + `--max-num-seqs=8`, decode util 0.90). 2-06-1과 2-06-4가 각각 손실 없음을 보였으나, 이 조합 자체는 실행하지 않았다.

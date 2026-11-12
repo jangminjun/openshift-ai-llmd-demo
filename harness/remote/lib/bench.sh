@@ -70,6 +70,8 @@ print("  %-24s ok=%d/%d codes=%s rps=%.2f ttft50=%s ttft95=%s e2e95=%s prefix_hi
 
 # ---------- load generator (in-cluster Job) ----------
 # loadgen_start <job-name> [VAR=VAL ...]: target = URL/MODEL or LLMD_NAMESPACE/LLMD_NAME (MaaS path).
+# LOADGEN_VIA=gateway: the Job resolves the URL host to the MaaS gateway ClusterIP (hostAliases), skipping the
+# cloud LB and its 60 s idle timeout (requests that queue longer than 60 s before the first token).
 loadgen_start() {
   local name=$1; shift
   (
@@ -78,6 +80,13 @@ loadgen_start() {
       URL="$(oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" -o jsonpath='{.status.url}')/v1/chat/completions"
     fi
     [ -n "${MODEL:-}" ] || MODEL=$(oc get llminferenceservice "$LLMD_NAME" -n "$LLMD_NAMESPACE" -o jsonpath='{.spec.model.name}')
+    HOST_ALIASES=""
+    if [ "${LOADGEN_VIA:-}" = gateway ]; then
+      gw_host=${URL#https://}; gw_host=${gw_host#http://}; gw_host=${gw_host%%/*}
+      gw_ip=$(oc get svc -n openshift-ingress -l "gateway.networking.k8s.io/gateway-name=${MAAS_GATEWAY:-maas-default-gateway}"         -o jsonpath='{.items[0].spec.clusterIP}')
+      [ -n "$gw_ip" ] || die "gateway Service for ${MAAS_GATEWAY:-maas-default-gateway} not found"
+      HOST_ALIASES="      hostAliases: [{ip: \"$gw_ip\", hostnames: [\"$gw_host\"]}]"
+    fi
     oc get namespace "$BENCH_NS" &>/dev/null || oc create namespace "$BENCH_NS" >/dev/null
     oc get sa loadgen -n "$BENCH_NS" &>/dev/null || oc create sa loadgen -n "$BENCH_NS" >/dev/null
     oc create configmap loadgen-script -n "$BENCH_NS" --from-file=loadgen.py="$HOME/ocp-install/loadgen.py" \
@@ -99,6 +108,7 @@ spec:
     spec:
       serviceAccountName: loadgen
       restartPolicy: Never
+${HOST_ALIASES}
       containers:
       - name: loadgen
         image: ${LOADGEN_IMAGE}
@@ -110,7 +120,7 @@ spec:
         volumeMounts: [{name: script, mountPath: /app}]
       volumes: [{name: script, configMap: {name: loadgen-script}}]
 YAML
-    echo "  loadgen $name -> $URL (model=$MODEL)" >&2
+    echo "  loadgen $name -> $URL (model=$MODEL${HOST_ALIASES:+, via gateway ClusterIP})" >&2
   )
   for _ in $(seq 1 60); do   # wait until the pod runs so callers can time phases
     [ "$(oc get pods -n "$BENCH_NS" -l job-name="$name" -o jsonpath='{.items[0].status.phase}' 2>/dev/null)" = Running ] && return 0
@@ -240,6 +250,63 @@ print(json.dumps(patch))' "$role" "$new" "$patch")
   rollout_end "$ns" "$n"; sleep 5; wait_isvc "$ns" "$n"
 }
 set_max_num_seqs() { set_vllm_flag "$1" "$2" max-num-seqs "$3"; }
+# vllm_args_edit <args> "<flag>=<value|on|default> ..." -> args with each --<flag> rewritten (see set_vllm_flag)
+vllm_args_edit() {
+  local a=$1 spec f v
+  for spec in $2; do
+    f=${spec%%=*}; v=${spec#*=}
+    if [ "$v" = default ]; then a=$(printf '%s' "$a" | sed -E "s/ ?--${f}(=[^ ]+)?( |$)/\2/; s/^ //"); continue; fi
+    [ "$v" = on ] && v="" || v="=$v"
+    if printf ' %s ' "$a" | grep -qE " --${f}(=[^ ]+)? "; then   # in place: same flags -> same string, no restart
+      a=$(printf '%s' "$a" | sed -E "s/(^| )--${f}(=[^ ]+)?( |$)/\1--${f}${v}\3/")
+    else a="$a --${f}${v}"; fi
+  done
+  printf '%s' "$a"
+}
+# set_vllm_flags <ns> <name> "<prefill specs>" "<decode specs>": several flags on both P/D roles with ONE
+# restart (rollout_begin/rollout_end). Does not wait for Ready: callers check startup (OOM) themselves.
+# Prints "changed" or "unchanged".
+set_vllm_flags() {
+  local ns=$1 n=$2 role cur new patch="[]" changed=""
+  for role in prefill decode; do
+    cur=$(vllm_args "$ns" "$n" "$role")
+    if [ "$role" = prefill ]; then new=$(vllm_args_edit "$cur" "$3"); else new=$(vllm_args_edit "$cur" "$4"); fi
+    [ "$new" = "$cur" ] && continue
+    changed="$changed $role"
+    patch=$(oc get llminferenceservice "$n" -n "$ns" -o json | "$PY" -c '
+import sys, json
+d, role, new, patch = json.load(sys.stdin), sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+base = "/spec/prefill/template" if role == "prefill" else "/spec/template"
+spec = d["spec"]["prefill"]["template"] if role == "prefill" else d["spec"]["template"]
+i = [e["name"] for e in spec["containers"][0]["env"]].index("VLLM_ADDITIONAL_ARGS")
+patch.append({"op": "replace", "path": "%s/containers/0/env/%d/value" % (base, i), "value": new})
+print(json.dumps(patch))' "$role" "$new" "$patch")
+    echo "  vLLM args ($role) -> $new" >&2
+  done
+  [ -n "$changed" ] || { echo unchanged; return; }
+  rollout_begin "$ns" "$n" >&2
+  oc patch llminferenceservice "$n" -n "$ns" --type=json -p "$patch" >/dev/null
+  rollout_end "$ns" "$n" >&2
+  echo changed
+}
+# pd_wait_start <ns> <name> [timeout-s]: wait until prefill + decode vLLM are Ready, or detect a startup
+# failure (container restart, CrashLoopBackOff, OOM / no-KV-memory message). Prints "ok" or "fail:<reason>".
+pd_wait_start() {
+  local ns=$1 n=$2 t=${3:-1800} i p rc logs
+  for i in $(seq 1 $((t / 15))); do
+    sleep 15
+    for p in $(oc get pods -n "$ns" -l 'llm-d.ai/role in (prefill,decode)' -o name 2>/dev/null | grep "/${n}-"); do
+      rc=$(oc get "$p" -n "$ns" -o jsonpath='{.status.containerStatuses[?(@.name=="main")].restartCount}' 2>/dev/null)
+      logs=$(oc logs "$p" -n "$ns" -c main --tail=200 2>/dev/null | grep -iE 'out of memory|No available memory for the cache blocks|insufficient memory' | tail -1 || true)
+      [ -z "$logs" ] && [ -z "$(oc logs "$p" -n "$ns" -c main --previous --tail=200 2>/dev/null | grep -iE 'out of memory|No available memory for the cache blocks|insufficient memory' | tail -1 || true)" ] ||         { echo "fail:${p#pod/}: ${logs:-previous container: out of memory}"; return; }
+      [ "${rc:-0}" -gt 0 ] && { echo "fail:${p#pod/}: main restarted $rc times"; return; }
+    done
+    if [ "$(oc get pods -n "$ns" -l 'llm-d.ai/role in (prefill,decode)' --no-headers 2>/dev/null | grep "^${n}-" | grep -c ' Running ')" -ge 2 ]        && [ "$(oc get llminferenceservice "$n" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = True ]        && ! oc get pods -n "$ns" -l 'llm-d.ai/role in (prefill,decode)' -o jsonpath='{range .items[*]}{.status.containerStatuses[?(@.name=="main")].ready} {end}' | grep -q false; then
+      echo ok; return
+    fi
+  done
+  echo "fail:not Ready after ${t}s"
+}
 # ---------- tracing (spec.tracing -> OTel Collector -> multi-tenant Tempo, see remote/tracing.sh) ----------
 TRACING_NS="${TRACING_NAMESPACE:-openshift-tempo}"
 TRACING_EP="http://llmd-otel-collector.${TRACING_NS}.svc.cluster.local:4317"

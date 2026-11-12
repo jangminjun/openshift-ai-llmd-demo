@@ -3,6 +3,25 @@
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
 
+## 2026-11-12 — scenarios-2 2-06 하네스 (Windows Git Bash, HARNESS_EXEC=local)
+
+- **vLLM 인자 문자열의 순서만 바뀌어도 pod가 재기동된다.** 플래그를 지우고 끝에 다시 붙이는 방식으로 같은 값을 넣자
+  `VLLM_ADDITIONAL_ARGS`가 달라져 P/D 두 역할이 모두 재기동되었다(약 8분). `vllm_args_edit`는 기존 플래그를 제자리에서 바꾼다.
+- **Windows Git Bash에서 `oc cp`가 실패한다.** 절대 경로 대상(`C:/...`)은 `<pod>:<path>`로 해석되고, 원본
+  `ns/pod:/path`는 Git Bash 경로 변환으로 깨진다. 결과 폴더로 이동한 뒤 상대 경로로 복사하고 `MSYS_NO_PATHCONV=1`을 준다
+  (`remote/guidellm.sh`). 이 때문에 GuideLLM 결과 복사와 2-03 리포트가 조용히 빠졌다.
+- **Windows의 `python3`은 Store 별칭일 수 있다.** 실행하면 "Python"만 출력하고 끝난다. 로컬 실행 경로는 `python3 -c pass`로
+  확인한 뒤 `python`으로 대체한다.
+- **vLLM 0.21+는 CUDA graph 메모리를 util 안에서 미리 뺀다.** util 0.85는 이전 방식의 약 0.796에 해당한다(기동 로그). 실측
+  graph 메모리는 1.26GiB(추정 1.19GiB)이다.
+- **`oc cp`는 간헐적으로 `unexpected EOF`로 끊긴다.** 이 때문에 전체 실행이 2-06-3에서 멈췄다. `remote/guidellm.sh`는 결과
+  폴더를 지우고 최대 3회 재시도한다.
+- **L4(24GB)의 vLLM 기본 `--max-num-batched-tokens`는 2048이다.** 2048을 명시해도 KV·GPU 메모리가 같았다. vLLM은 GPU
+  메모리 70GiB 미만에서 API 서버 기본값을 2048로 둔다. 이 값은 기동 로그에 나오지 않는다.
+- **같은 구성도 실행 세션마다 지연이 다르다.** 기본 구성의 L1 동시 16 TTFT p50이 10.4초(11-12)와 13.4초(11-13)였다. 설정
+  비교는 같은 세션의 기준과만 한다.
+
+
 ## 2026-11-05 — scenarios-2 P/D (RHDP sandbox1343, RHOAI 3.5.2)
 
 - **하이브리드 모델 P/D는 `VLLM_SSM_CONV_STATE_LAYOUT=DS`가 필요하다.** Qwen3.8(linear attention 층 포함)은 conv 상태도

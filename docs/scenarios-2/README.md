@@ -31,7 +31,7 @@ oc get maassubscription -n models-as-a-service
 | 2-03 | [부하 하 P/D 동작](03-pd-under-load.md) | KV 전달 실패 0. 8K 프롬프트에서 TTFT 7→27초에도 ITL 35.9ms 유지. 병목은 prefill |
 | 2-04 | [P/D 결정 임계값](04-pd-decider-threshold.md) | 짧은 요청은 prefill 생략, TTFT 0.52→0.10초. 긴 요청은 그대로 분리 |
 | 2-05 | [prefix 캐시와 P/D](05-pd-prefix-cache.md) | 2번째 질문 TTFT −40%. 하이브리드 블록(1,568토큰) 때문에 decider 기준은 블록 크기 이상 필요 |
-| 2-06 | [역할별 GPU 메모리 설정](06-gpu-memory-utilization.md) | 설계. 하위 [06-1](06-1-role-memory-utilization.md) util, [06-2](06-2-prefill-enforce-eager.md) enforce-eager, [06-3](06-3-prefill-batched-tokens.md) 배치 토큰, [06-4](06-4-prefill-max-num-seqs.md) max-num-seqs, [06-5](06-5-role-memory-combined.md) 통합 |
+| 2-06 | [역할별 GPU 메모리 설정](06-gpu-memory-utilization.md) | 전 구성 OOM 없음. 권장: prefill util 0.75 + max-num-seqs 8, decode util 0.90. prefill enforce-eager는 처리량 −13~22%. 장문 부하에서 Flow Control(16)이 preemption 83→0, 처리량 +76%. 하위 [06-1](06-1-role-memory-utilization.md) util, [06-2](06-2-prefill-enforce-eager.md) enforce-eager, [06-3](06-3-prefill-batched-tokens.md) 배치 토큰, [06-4](06-4-prefill-max-num-seqs.md) max-num-seqs, [06-5](06-5-role-memory-combined.md) 통합, [06-6](06-6-epp-flow-control.md) EPP Flow Control |
 
 ### MaaS 토큰 한도와 429 ([429-error/](429-error/))
 
@@ -47,7 +47,6 @@ oc get maassubscription -n models-as-a-service
 | 2-08-5 | [동시 실행 제한](429-error/08-5-concurrency-cap.md) | 동시 1이면 429 0건, 완료 시간 +40%(클라이언트 구현) |
 | 2-08-6 | [구독 분리](429-error/08-6-subscription-split.md) | 대화형 별도 구독으로 단문 429 0건 |
 | 2-08-7 | [입력 압축](429-error/08-7-input-compression.md) | 입력 1/3이면 구간당 처리 2→5건 |
-| 2-08-8 | [EPP Flow Control](429-error/08-8-epp-flow-control.md) | 아이디어(미실행). 장문·단문 지연 간섭 완화 |
 
 ## 주요 결론
 

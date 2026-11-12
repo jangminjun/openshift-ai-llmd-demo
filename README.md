@@ -107,12 +107,13 @@ NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness
 | 2-03 | [부하 하 P/D 동작](docs/scenarios-2/03-pd-under-load.md) | GuideLLM 동시 1~16에서 분리율, KV 전달 실패, decode ITL | 분리 정상(KV 실패 0). 8K 프롬프트에서 TTFT 7 → 27초에도 ITL 35.9ms 유지. 병목은 prefill | `./harness.sh scenario2-03-pd-load` |
 | 2-04 | [P/D 결정 임계값](docs/scenarios-2/04-pd-decider-threshold.md) | 짧은 프롬프트의 prefill 생략(decider) | `threshold: 1000`: 짧은 요청 prefill 경유 0건, TTFT 0.52 → 0.10초. 긴 요청은 그대로 분리 | `./harness.sh scenario2-04-pd-decider` |
 | 2-05 | [prefix 캐시와 P/D](docs/scenarios-2/05-pd-prefix-cache.md) | 채팅 2번째 질문의 prefill 생략과 decode 캐시 재사용(항상 분리 vs 임계값 분리) | prefix 캐시로 2번째 질문 TTFT −40%. 블록 1,568토큰 때문에 기준 250에선 생략 안 됨, 2,000에서 prefill 0/40·TTFT 추가 −9% | `./harness.sh scenario2-05-pd-prefix-cache` |
-| 2-06 | [P/D 역할별 GPU 메모리 설정](docs/scenarios-2/06-gpu-memory-utilization.md) | prefill·decode의 메모리 성격 차이를 이용한 OOM 회피(개요) | 설계 | - |
-| 2-06-1 | [역할별 gpu-memory-utilization](docs/scenarios-2/06-1-role-memory-utilization.md) | prefill 0.75, decode 0.90(한계 0.95) | 설계 | - |
-| 2-06-2 | [prefill --enforce-eager](docs/scenarios-2/06-2-prefill-enforce-eager.md) | prefill CUDA graph 메모리·컴파일 시간 회수 | 설계 | - |
-| 2-06-3 | [prefill max-num-batched-tokens](docs/scenarios-2/06-3-prefill-batched-tokens.md) | 활성화 피크 축소 | 설계 | - |
-| 2-06-4 | [prefill max-num-seqs](docs/scenarios-2/06-4-prefill-max-num-seqs.md) | prefill 동시 요청 축소 | 설계 | - |
-| 2-06-5 | [역할별 메모리 설정 통합](docs/scenarios-2/06-5-role-memory-combined.md) | 2-06-1~4 통합 구성의 OOM 여유·KV·지연 | 설계 | - |
+| 2-06 | [P/D 역할별 GPU 메모리 설정](docs/scenarios-2/06-gpu-memory-utilization.md) | prefill·decode의 메모리 성격 차이를 이용한 OOM 회피(개요) | 전 구성 OOM 없음. 권장: prefill 0.75 + max-num-seqs 8, decode 0.90. 장문 부하는 Flow Control | - |
+| 2-06-1 | [역할별 gpu-memory-utilization](docs/scenarios-2/06-1-role-memory-utilization.md) | prefill 0.75, decode 0.90(한계 0.95) | 0.90: decode KV +14.4%, 0.95: +28.8%. 기동·L1·L2 OOM 없음, 지연 변화 없음 | - |
+| 2-06-2 | [prefill --enforce-eager](docs/scenarios-2/06-2-prefill-enforce-eager.md) | prefill CUDA graph 메모리·컴파일 시간 회수 | 기동 145→64초, KV +2.19GiB. L2 처리량 −13~22%로 비권장 | - |
+| 2-06-3 | [prefill max-num-batched-tokens](docs/scenarios-2/06-3-prefill-batched-tokens.md) | 활성화 피크 축소 | 2048은 L4 기본값과 같아 효과 없음 | - |
+| 2-06-4 | [prefill max-num-seqs](docs/scenarios-2/06-4-prefill-max-num-seqs.md) | prefill 동시 요청 축소 | graph −0.68GiB, KV +7.2%, 처리량 동일. 권장 | - |
+| 2-06-5 | [역할별 메모리 설정 통합](docs/scenarios-2/06-5-role-memory-combined.md) | 2-06-1~4 통합 구성의 OOM 여유·KV·지연 | decode KV +14.4%, prefill GPU −1.7GiB. eager 때문에 L2 처리량 −13% | - |
+| 2-06-6 | [EPP Flow Control로 KV 포화 회피](docs/scenarios-2/06-6-epp-flow-control.md) | decode util을 낮춰 OOM 여유를 두고, KV 축소분은 EPP 입장 제한·우선순위로 보완 | decode KV 최대 99%→75%, preemption 83→0, 장문 처리량 +76%, 대화형 TTFT p50 8.8초(대조군 296초) | - |
 | 2-07 | [장문 호출과 MaaS 토큰 한도](docs/scenarios-2/429-error/07-maas-token-ratelimit.md) | 토큰/15초 한도에서 장문 요청 후 429 발생 구조(응답 후 차감, 동시 초과, 스트리밍 usage, 2단 한도) | 응답 후 차감 + 첫 차감부터의 고정 구간. 동시 장문이 한도 2.4배 사용, 단문 7.2초 연쇄 차단. 1분 구간 차단 25초. Retry-After 없음 | `./harness.sh scenario2-07-maas-ratelimit` |
 | 2-08 | [429 원인 검증과 완화 방안](docs/scenarios-2/429-error/08-429-root-cause-and-mitigation.md) | 원인 가설 H1~H3 판정, 방안 M1~M6·S1~S2를 하위 시나리오로 매핑 | 429는 MaaS 토큰 한도(고정 구간, 응답 후 입출력 합산 차감)에서만 발생. 서버 포화는 429가 아니라 ELB 60초 끊김 | `./harness.sh scenario2-08-mitigation` (`MAAS_MIT_ARMS=single io saturate`) |
 | 2-08-0 | [rate-limit 헤더 기반 재시도](docs/scenarios-2/429-error/08-0-ratelimit-headers.md) | Limitador `X-RateLimit-Reset`으로 Retry-After 대체 | 헤더 미전달: Limitador v2.4.2의 `CheckRateLimit`(토큰 한도 경로)이 헤더를 만들지 않음. v2.6.0부터 지원 | `MAAS_MIT_ARMS=headers` |
@@ -123,7 +124,6 @@ NVFP4, MXFP4)이다. 관측은 Grafana 대시보드 `llmd-pd-latency`(`./harness
 | 2-08-5 | [세션당 동시 실행 제한](docs/scenarios-2/429-error/08-5-concurrency-cap.md) | 동시 4/2/1의 초과량과 단문 429 | 동시 1: 429 0건, 단문 TTFT 24.5 → 5.7초, 완료 시간 +40% | `MAAS_MIT_ARMS=conc` |
 | 2-08-6 | [구독 분리](docs/scenarios-2/429-error/08-6-subscription-split.md) | 장문·대화형을 다른 구독으로 | 단문 429 6 → 0, 지연은 GPU 공유로 남음 | `MAAS_MIT_ARMS=split` |
 | 2-08-7 | [입력 압축 효과 산정](docs/scenarios-2/429-error/08-7-input-compression.md) | RAG 요약·reranker의 차감 효과 계산 | 입력 12K → 4K 압축 시 구간당 통과 2 → 5건 | - |
-| 2-08-8 | [EPP Flow Control 우선순위](docs/scenarios-2/429-error/08-8-epp-flow-control.md) | 장문·단문 간섭을 EPP 큐 우선순위로 완화 | 아이디어(미실행) | - |
 
 ## 사전 조건
 

@@ -146,6 +146,11 @@ oc run guidellm-results -n "$BNS" --image="$IMAGE" --restart=Never --command \
   -- sleep 300 >/dev/null
 oc wait --for=condition=Ready "pod/guidellm-results" -n "$BNS" --timeout=180s >/dev/null
 mkdir -p "$OUT"
-oc cp "$BNS/guidellm-results:/results/$RUN" "$OUT/$RUN" >/dev/null
+# Git Bash: relative destination (an absolute "C:/..." is parsed as <pod>:<path>) and no path conversion of the source
+for i in 1 2 3; do   # oc cp drops large files now and then ("unexpected EOF")
+  rm -rf "${OUT:?}/$RUN"
+  (cd "$OUT" && MSYS_NO_PATHCONV=1 oc cp "$BNS/guidellm-results:/results/$RUN" "$RUN" >/dev/null) && break
+  echo "  oc cp failed (try $i), retrying"; sleep 5
+done
 oc delete pod guidellm-results -n "$BNS" --wait=false >/dev/null
 echo "  results: $OUT/$RUN ($(ls "$OUT/$RUN" | tr '\n' ' '))"

@@ -36,7 +36,7 @@ HARNESS_PROFILE=sno MAAS_MIT_ARMS="single io saturate" ./harness.sh scenario2-08
 | M6 | 세션당 동시 실행 1~2개 제한 | 동시 요청이 함께 통과해 한도를 넘는 현상(2-07 E2)을 줄인다 | [2-08-5](08-5-concurrency-cap.md) (`conc`) |
 | S1 | 대용량 에이전트 전용 엔드포인트·풀 분리 | 카운터가 구독 + 사용자 + 모델 단위이므로 구독 분리만으로 한도 간섭이 사라진다. GPU 간섭은 별도 `LLMInferenceService`가 필요하다 | [2-08-6](08-6-subscription-split.md) (`split`) |
 | S2 | RAG 컨텍스트 요약·reranker로 입력 압축 | 차감 토큰이 입력에 비례하므로 효과가 직접적이다. 애플리케이션 영역이므로 `io` 결과로 효과를 산정한다 | [2-08-7](08-7-input-compression.md) |
-| 추가 | EPP Flow Control 우선순위 | 429 대책은 아니다(토큰 한도는 EPP 앞 Gateway에서 판정). 장문·단문 지연 간섭의 완화책으로 검토 | [2-08-8](08-8-epp-flow-control.md) (아이디어) |
+| 추가 | EPP Flow Control 우선순위 | 429 대책은 아니다(토큰 한도는 EPP 앞 Gateway에서 판정). 운영 중 KV 포화 회피 방안으로 2-06-6에서 검토 | [2-06-6](../06-6-epp-flow-control.md) |
 
 모든 실험은 클러스터 내 Job(API 키는 Secret)으로 수행하며, 종료 시 한도와 vLLM 인자를 원래대로 되돌린다. 요청 크기는
 `--max-model-len=16384`에 맞춰 축소하였다(장문 약 12K 토큰, 고객 사례 100K는 비율로 환산).

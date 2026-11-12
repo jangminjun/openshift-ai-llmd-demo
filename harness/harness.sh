@@ -41,6 +41,9 @@
 #   scenario2-03-pd-load                GuideLLM loads on a P/D model + prefill/decode counters (S23_LOADS, GUIDELLM_VIA=gateway)
 #   scenario2-04-pd-decider             P/D decider threshold: short vs long prompts, prefill hits (S24_THRESHOLDS)
 #   scenario2-05-pd-prefix-cache        P/D + prefix cache: multi-turn, prefill hits per turn (S25_THRESHOLDS)
+#   scenario2-06-memory                 per-role GPU memory configs (S26_CONFIGS="base r1 r2 eager chunk seqs c1"):
+#                                       restart + startup memory/OOM, then the 2-03 L1/L2 loads (S26_LOADS)
+#   scenario2-06-6-flow-control         EPP Flow Control vs decode KV saturation (S26_FC_CONDS="f0 f1 f2")
 #   scenario2-07-maas-ratelimit         MaaS token limit with long prompts (MAAS_RL_ARMS=E1..E4, see remote/scenario2-07-maas-ratelimit.sh)
 #   scenario2-08-mitigation             429 mitigations: limit sizing, concurrency cap, retry policy, subscription split (MAAS_MIT_ARMS=M1..M4)
 #   maas-checks                         MAAS_CHECK=nonstream|token-limit
@@ -176,7 +179,7 @@ cmd_llmd_loadgen() { run_bench llmd-loadgen.sh; }
 # Needs the results locally (HARNESS_EXEC=local).
 cmd_scenario2_03() {
   [ "$HARNESS_EXEC" = local ] || err "scenario2-03-pd-load reads GuideLLM results locally: use HARNESS_EXEC=local"
-  local l run dir="$HARNESS_DIR/results/scenario2-03"
+  local l run dir="${S23_OUT:-$HARNESS_DIR/results/scenario2-03}"
   export LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-pd}" LLMD_NAME="${LLMD_NAME:-qwen38-int4-pd}"
   mkdir -p "$dir"
   for l in ${S23_LOADS:-2000/256 8000/128}; do
@@ -186,7 +189,7 @@ cmd_scenario2_03() {
     GUIDELLM_VIA="${GUIDELLM_VIA:-gateway}" GUIDELLM_PROMPT_TOKENS="${l%/*}" GUIDELLM_OUTPUT_TOKENS="${l#*/}" \
       GUIDELLM_RUN_ID="$run" GUIDELLM_OUT="$dir" cmd_guidellm
     run_bench --eval "pd_counters $LLMD_NAMESPACE $LLMD_NAME" > "$dir/$run.after.json"
-    python3 ./tools/pd-load-report.py "$dir/$run.before.json" "$dir/$run.after.json" "$dir/$run/benchmarks.json" \
+    $(python3 -c pass 2>/dev/null && echo python3 || echo python) ./tools/pd-load-report.py "$dir/$run.before.json" "$dir/$run.after.json" "$dir/$run/benchmarks.json" \
       | tee "$dir/$run.report.txt"
   done
 }
@@ -300,6 +303,26 @@ cmd_maas_checks() { run_bench maas-checks.sh; }
 cmd_scenario2_04() { run_bench scenario2-04-pd-decider.sh; }
 cmd_scenario2_05() { run_bench scenario2-05-pd-prefix-cache.sh; }
 cmd_scenario2_07() { run_bench scenario2-07-maas-ratelimit.sh; }
+cmd_scenario2_066() { run_bench scenario2-06-6-flow-control.sh; }
+
+# Scenario 2-06-1..5: for each config, apply it (one restart, OOM check) and, if it started, run the
+# 2-03 loads (S26_LOADS, default "2000/256 8000/128") into results/scenario2-06/<run>-<config>/.
+# Restores the base config at the end (S26_RESTORE=false keeps the last one). Needs HARNESS_EXEC=local.
+cmd_scenario2_06() {
+  [ "$HARNESS_EXEC" = local ] || err "scenario2-06-memory runs the 2-03 loads locally: use HARNESS_EXEC=local"
+  export LLMD_NAMESPACE="${LLMD_NAMESPACE:-llmd-pd}" LLMD_NAME="${LLMD_NAME:-qwen38-int4-pd}"
+  local c r run="$(date +%Y%m%d-%H%M%S)" root="$HARNESS_DIR/results/scenario2-06"
+  mkdir -p "$root"
+  for c in ${S26_CONFIGS:-base r1 r2 eager chunk seqs c1}; do
+    log "2-06 config $c"
+    S26_CONFIG=$c run_bench scenario2-06-memory.sh | tee "$root/$run-$c.startup.txt"
+    r=$(sed -n 's/^S26_RESULT [^ ]* //p' "$root/$run-$c.startup.txt" | tail -1)
+    if [ "$r" != ok ]; then log "config $c did not start ($r): no load"; continue; fi
+    S23_LOADS="${S26_LOADS:-2000/256 8000/128}" S23_OUT="$root/$run-$c" cmd_scenario2_03 | tee "$root/$run-$c.load.txt"
+  done
+  [ "${S26_RESTORE:-true}" = true ] && S26_CONFIG=base run_bench scenario2-06-memory.sh | tail -3
+  log "results: $root/$run-*"
+}
 cmd_scenario2_08() { run_bench scenario2-08-mitigation.sh; }
 
 
@@ -350,6 +373,8 @@ case "$cmd" in
   scenario2-03-pd-load)               cmd_scenario2_03 ;;
   scenario2-04-pd-decider)            cmd_scenario2_04 ;;
   scenario2-05-pd-prefix-cache)       cmd_scenario2_05 ;;
+  scenario2-06-memory)                cmd_scenario2_06 ;;
+  scenario2-06-6-flow-control)        cmd_scenario2_066 ;;
   scenario2-07-maas-ratelimit)        cmd_scenario2_07 ;;
   scenario2-08-mitigation)            cmd_scenario2_08 ;;
   maas-checks)                        cmd_maas_checks ;;
